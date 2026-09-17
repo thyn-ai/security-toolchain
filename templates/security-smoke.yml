@@ -17,4 +17,3 @@ jobs:
       contents: read
     with:
       mode: {mode}
-      toolchain_ref: {sha} # kept identical to the uses: pin above -- propagate bumps both together

@@ -108,8 +108,7 @@ def upsert_workflow(
 ) -> str:
     if existing is not None and _USES_RE.search(existing):
         text = _USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
-        text = _carry_forward_permissions(text, kind)
-        return _carry_forward_toolchain_ref(text, sha)
+        return _carry_forward_permissions(text, kind)
     template = TEMPLATES / ("security.yml" if kind == "full" else "security-smoke.yml")
     return template.read_text(encoding="utf-8").format(sha=sha, tag=tag, overlay=overlay, mode=mode)
 
@@ -145,35 +144,6 @@ def _carry_forward_permissions(text: str, kind: str) -> str:
     inner = body.splitlines()[0][len(indent) :]
     inner_indent = inner[: len(inner) - len(inner.lstrip())]
     addition = "".join(f"{indent}{inner_indent}{p}\n" for p in missing)
-    return text[: m.end()] + addition + text[m.end() :]
-
-
-_WITH_BLOCK_RE = re.compile(
-    r"(?m)^(?P<indent>[ \t]+)with:\n(?P<body>(?:(?P=indent)[ \t]+\S[^\n]*\n)+)"
-)
-_TOOLCHAIN_REF_LINE_RE = re.compile(r"(?m)^([ \t]+)toolchain_ref:[ \t]*\S+.*$")
-
-
-def _carry_forward_toolchain_ref(text: str, sha: str) -> str:
-    """Keep the callee's `toolchain_ref` input equal to the `uses:` pin's own SHA.
-
-    security-full.yml/security-smoke.yml install thyn-ai/security-toolchain internally via
-    this input (defaulting to v0.1.1 for callers written before it existed) -- without this,
-    bumping only the `uses:@sha` pin has NO effect on which toolchain version actually runs in
-    CI, since that install step is otherwise pinned independently of the reusable workflow ref
-    a caller chose. Confirmed the hard way: v0.1.2 through v0.1.5 all silently installed v0.1.1.
-    """
-    m = _WITH_BLOCK_RE.search(text)
-    if not m:
-        return text
-    ref_line = f"toolchain_ref: {sha} # kept == the uses: pin above; propagate bumps both"
-    if _TOOLCHAIN_REF_LINE_RE.search(m.group(0)):
-        new_block = _TOOLCHAIN_REF_LINE_RE.sub(lambda mm: f"{mm.group(1)}{ref_line}", m.group(0))
-        return text[: m.start()] + new_block + text[m.end() :]
-    indent = m.group("indent")
-    inner = m.group("body").splitlines()[0]
-    inner_indent = inner[: len(inner) - len(inner.lstrip())]
-    addition = f"{indent}{inner_indent}{ref_line}\n"
     return text[: m.end()] + addition + text[m.end() :]
 
 
