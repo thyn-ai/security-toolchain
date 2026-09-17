@@ -81,9 +81,13 @@ def upsert_block(existing: str | None, block: str, python: bool, ruff_rev: str) 
                 .read_text(encoding="utf-8")
                 .format(ruff_rev=ruff_rev)
             )
-        return (TEMPLATES / "pre-commit-config.yaml").read_text(encoding="utf-8").format(
-            extra_hooks=extra.rstrip("\n"), block=block.rstrip("\n")
-        ) + "\n"
+        rendered = (
+            (TEMPLATES / "pre-commit-config.yaml")
+            .read_text(encoding="utf-8")
+            .format(extra_hooks=extra.rstrip("\n"), block=block.rstrip("\n"))
+        )
+        # Exactly one trailing newline: the generated file must pass its own end-of-file-fixer.
+        return re.sub(r"\n{3,}", "\n\n", rendered).rstrip("\n") + "\n"
     text = existing
     if BEGIN in text and END in text:
         start = text.index(BEGIN)
