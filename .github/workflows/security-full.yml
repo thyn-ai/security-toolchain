@@ -42,14 +42,6 @@ on:
       python_version:
         type: string
         default: "3.12"
-      toolchain_ref:
-        description: >-
-          Ref (tag or commit SHA) of thyn-ai/security-toolchain to install for this run. Set it
-          to the SAME ref this file itself is pinned at in the caller's `uses:` line -- propagate
-          keeps both in sync on every bump. Defaults to v0.1.1 so callers pinned before this
-          input existed keep their exact current behavior with no action required.
-        type: string
-        default: v0.1.1
 
 permissions: {}
 
@@ -81,58 +73,11 @@ jobs:
         with:
           persist-credentials: false
 
-      # `uses:` cannot take a dynamic value (confirmed by actionlint: "context 'inputs' is not
-      # allowed here") -- a reusable workflow has no way to call thyn-ai/security-toolchain's own
-      # composite action at a ref chosen by ITS caller. So this installs the toolchain the same
-      # way the composite action does (see action.yml), just inlined with an explicit checkout
-      # instead of relying on `uses:`'s implicit one. Keep the two in sync by hand; self-test's
-      # integration job exercises the composite action path directly and would not catch a drift
-      # here on its own.
-      - name: Check out thyn-ai/security-toolchain at the pinned ref
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: thyn-ai/security-toolchain
-          ref: ${{ inputs.toolchain_ref }}
-          path: .thyn-sec-src
-          persist-credentials: false
-
-      - name: Set up Python for thyn-sec
-        id: py
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - name: Set up thyn-sec
+        id: setup
+        uses: thyn-ai/security-toolchain@v0.1.7 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
         with:
           python-version: ${{ inputs.python_version }}
-          update-environment: false
-
-      - name: Cache metadata
-        id: meta
-        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore scanner cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cache/thyn-sec
-            ~/.cache/trivy
-          key: thyn-sec-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain_ref }}-${{ steps.meta.outputs.week }}
-          restore-keys: |
-            thyn-sec-${{ runner.os }}-${{ runner.arch }}-${{ inputs.toolchain_ref }}-
-
-      - name: Install thyn-sec
-        id: setup
-        env:
-          PY: ${{ steps.py.outputs.python-path }}
-          REF: ${{ inputs.toolchain_ref }}
-        run: |
-          set -euo pipefail
-          "$PY" -m venv "$RUNNER_TEMP/thyn-sec-venv"
-          "$RUNNER_TEMP/thyn-sec-venv/bin/python" -m pip install --quiet --disable-pip-version-check "$GITHUB_WORKSPACE/.thyn-sec-src"
-          echo "$RUNNER_TEMP/thyn-sec-venv/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" --version
-          echo "ref=$REF" >> "$GITHUB_OUTPUT"
-
-      - name: Prefetch pinned scanners
-        run: |
-          "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" install all --rules --print-path
 
       - name: Verify pins
         env:
