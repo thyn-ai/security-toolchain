@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parents[1]
 def test_dunder_version_matches_pyproject():
     pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
     m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', pyproject)
-    assert m, "pyproject.toml has no top-level version = \"...\" line"
+    assert m, 'pyproject.toml has no top-level version = "..." line'
     assert __version__ == m.group(1), (
         f"thyn_security_toolchain.__version__ ({__version__!r}) != "
         f"pyproject.toml [project].version ({m.group(1)!r}) -- "
