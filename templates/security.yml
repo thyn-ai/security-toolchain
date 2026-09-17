@@ -29,6 +29,7 @@ jobs:
       contents: read
       security-events: write
       pull-requests: read
+      actions: read # SARIF upload needs it while this repository is private
     with:
       overlay: {overlay}
       mode: {mode}
