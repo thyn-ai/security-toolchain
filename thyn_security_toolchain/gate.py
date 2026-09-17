@@ -132,6 +132,54 @@ def normalize_opengrep_rule_id(rule_id: str) -> str:
     return _OPENGREP_PREFIX.sub("", rule_id)
 
 
+_AUDIT_RULE_ID = re.compile(r"(^|\.)audit\.|-audit$")
+
+
+def _is_low_confidence_rule(rule_id: str, meta: dict) -> bool:
+    tags = (meta.get("properties") or {}).get("tags") or []
+    if any(str(t).upper() == "LOW CONFIDENCE" for t in tags):
+        return True
+    return bool(_AUDIT_RULE_ID.search(normalize_opengrep_rule_id(rule_id)))
+
+
+def demote_low_confidence_levels(path: Path) -> int:
+    """Rewrite an Opengrep SARIF in place so low-confidence / audit rules carry level ``warning``.
+
+    The gate below already scores them MEDIUM, but GitHub reads the SARIF itself: an ``error``
+    result turns the code-scanning check red and trips a ``code_quality`` ruleset on the caller,
+    so an audit hint on intended subprocess use blocked thyn-ai/codna#508 even in advisory mode.
+    Real (non-audit) rules keep their level. Returns how many results changed effective level.
+    Idempotent; a file with nothing to demote is not rewritten.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    demoted = 0
+    for run in data.get("runs", []):
+        rules = (run.get("tool", {}).get("driver", {}) or {}).get("rules", []) or []
+        low_rules: set[str] = set()
+        default_demoted: set[str] = set()
+        for rule in rules:
+            rid = rule.get("id", "")
+            if not _is_low_confidence_rule(rid, rule):
+                continue
+            low_rules.add(rid)
+            cfg = rule.setdefault("defaultConfiguration", {})
+            if cfg.get("level") == "error":
+                cfg["level"] = "warning"
+                default_demoted.add(rid)
+        for res in run.get("results", []) or []:
+            rid = res.get("ruleId")
+            if rid not in low_rules:
+                continue
+            if res.get("level") == "error":
+                res["level"] = "warning"
+                demoted += 1
+            elif "level" not in res and rid in default_demoted:
+                demoted += 1
+    if demoted:
+        path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    return demoted
+
+
 def parse_opengrep_sarif(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: list[Finding] = []

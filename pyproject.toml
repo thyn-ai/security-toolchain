@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thyn-security-toolchain"
-version = "0.1.7"
+version = "0.1.8"
 description = "Pinned, checksum-verified local-first security toolchain (Gitleaks, Opengrep, OSV-Scanner, Trivy config, actionlint) as pre-commit hooks and a reusable GitHub Actions gate."
 readme = "README.md"
 license = { text = "Apache-2.0" }

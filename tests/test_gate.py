@@ -234,3 +234,87 @@ def test_write_baseline_records_commit_and_run(tmp_path: Path, actions_env):
     text = p.read_text()
     assert "# commit: 0123456789abcdef0123456789abcdef01234567" in text
     assert "# run: https://github.com/thyn-ai/fixture/actions/runs/4242" in text
+
+
+def test_low_confidence_and_audit_rules_are_demoted_to_warning_in_the_sarif(tmp_path: Path):
+    from thyn_security_toolchain.gate import demote_low_confidence_levels
+
+    rules = [
+        {
+            "id": "python.lang.security.audit.dangerous-subprocess-use-audit",
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"tags": ["security"]},
+        },
+        {
+            "id": "custom.low-conf",
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"tags": ["LOW CONFIDENCE"]},
+        },
+        {
+            "id": "python.lang.security.real-injection",
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"tags": ["HIGH CONFIDENCE"]},
+        },
+    ]
+    results = [
+        {"ruleId": rules[0]["id"], "level": "error", "message": {"text": "audit"}, "locations": []},
+        {"ruleId": rules[1]["id"], "message": {"text": "low"}, "locations": []},
+        {"ruleId": rules[2]["id"], "level": "error", "message": {"text": "real"}, "locations": []},
+    ]
+    p = tmp_path / "opengrep.sarif"
+    p.write_text(
+        json.dumps(
+            {
+                "version": "2.1.0",
+                "runs": [
+                    {
+                        "tool": {"driver": {"name": "Opengrep OSS", "rules": rules}},
+                        "results": results,
+                    }
+                ],
+            }
+        )
+    )
+    assert demote_low_confidence_levels(p) == 2
+    run = json.loads(p.read_text())["runs"][0]
+    by_id = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+    assert by_id[rules[0]["id"]]["defaultConfiguration"]["level"] == "warning"
+    assert by_id[rules[1]["id"]]["defaultConfiguration"]["level"] == "warning"
+    assert by_id[rules[2]["id"]]["defaultConfiguration"]["level"] == "error"
+    levels = {r["ruleId"]: r.get("level") for r in run["results"]}
+    assert levels[rules[0]["id"]] == "warning"
+    assert levels[rules[1]["id"]] is None  # inherits the (now warning) rule default
+    assert levels[rules[2]["id"]] == "error"
+    assert demote_low_confidence_levels(p) == 0  # idempotent
+
+
+def test_demotion_leaves_a_sarif_without_audit_rules_untouched(tmp_path: Path):
+    from thyn_security_toolchain.gate import demote_low_confidence_levels
+
+    p = tmp_path / "opengrep.sarif"
+    original = json.dumps(
+        {
+            "version": "2.1.0",
+            "runs": [
+                {
+                    "tool": {
+                        "driver": {
+                            "name": "Opengrep OSS",
+                            "rules": [
+                                {
+                                    "id": "python.lang.security.real-injection",
+                                    "defaultConfiguration": {"level": "error"},
+                                }
+                            ],
+                        }
+                    },
+                    "results": [
+                        {"ruleId": "python.lang.security.real-injection", "level": "error"}
+                    ],
+                }
+            ],
+        }
+    )
+    p.write_text(original)
+    assert demote_low_confidence_levels(p) == 0
+    assert p.read_text() == original
