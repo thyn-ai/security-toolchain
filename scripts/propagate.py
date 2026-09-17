@@ -268,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = 0
     for name, cfg in selected.items():
+        if cfg.get("skip"):
+            print(f"{name}: skipped -- {cfg['skip']}")
+            continue
         try:
             print(propagate(name, cfg, defaults, tag, sha, args))
         except SystemExit as exc:
