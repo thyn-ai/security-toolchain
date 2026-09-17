@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .changed import ZERO_SHA
 from .fetch import offline, rules_path, tool_path
-from .gate import PARSERS, Finding
+from .gate import PARSERS, Finding, demote_low_confidence_levels
 from .lock import DATA_DIR
 from .repo import DEFAULT_SKIP_DIRS, gitleaks_config, local_opengrep_rules
 
@@ -193,6 +193,8 @@ def opengrep(root: Path, overlay: str, targets: list[str] | None, report: Path) 
         cmd += ["--exclude-rule", r]
     cmd += targets if targets is not None else ["."]
     _run(cmd, root, ok=(0, 1))
+    if report.is_file():
+        demote_low_confidence_levels(report)
     return PARSERS["opengrep"](report, root) if report.is_file() else []
 
 

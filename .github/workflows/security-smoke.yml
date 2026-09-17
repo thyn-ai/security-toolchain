@@ -43,7 +43,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.7 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
+        uses: thyn-ai/security-toolchain@v0.1.8 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
         with:
           prefetch: "false"
 
