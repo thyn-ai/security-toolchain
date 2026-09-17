@@ -34,3 +34,4 @@ jobs:
       overlay: {overlay}
       mode: {mode}
       measure_baseline: ${{{{ github.event_name == 'workflow_dispatch' && inputs.measure_baseline == true }}}}
+      toolchain_ref: {sha} # kept identical to the uses: pin above -- propagate bumps both together

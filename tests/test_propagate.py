@@ -43,6 +43,30 @@ def test_bump_adds_permissions_the_new_callee_requires():
     assert "      overlay: python-uv" in out and "      mode: advisory" in out
 
 
+def test_bump_inserts_toolchain_ref_for_a_caller_written_before_it_existed():
+    # V010_CALLER predates the toolchain_ref input entirely -- security-full.yml/
+    # security-smoke.yml otherwise silently keep installing whatever their own hardcoded
+    # default says (v0.1.1), regardless of what SHA the caller's own `uses:` pin bumps to.
+    out = propagate.upsert_workflow(V010_CALLER, "full", SHA_NEW, "v0.1.1", "python-uv", "advisory")
+    assert out.count("toolchain_ref:") == 1
+    assert f"toolchain_ref: {SHA_NEW}" in out
+    with_block = out.split("    with:\n", 1)[1]
+    assert with_block.strip().splitlines()[-1].strip().startswith("toolchain_ref:")
+
+
+def test_bump_updates_an_existing_toolchain_ref_and_is_idempotent():
+    once = propagate.upsert_workflow(
+        V010_CALLER, "full", SHA_NEW, "v0.1.1", "python-uv", "advisory"
+    )
+    assert f"toolchain_ref: {SHA_NEW}" in once
+    twice = propagate.upsert_workflow(once, "full", SHA_OLD, "v0.1.0", "python-uv", "advisory")
+    # a later bump (even backwards, in this synthetic test) replaces the value, never duplicates it
+    assert twice.count("toolchain_ref:") == 1
+    assert f"toolchain_ref: {SHA_OLD}" in twice and SHA_NEW not in twice
+    same = propagate.upsert_workflow(twice, "full", SHA_OLD, "v0.1.0", "python-uv", "advisory")
+    assert same == twice
+
+
 def test_bump_is_idempotent_and_matches_the_template_permissions():
     rendered = (
         (REPO / "templates" / "security.yml")
