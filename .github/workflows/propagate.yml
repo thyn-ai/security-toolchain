@@ -37,6 +37,25 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+
+      - name: Refuse to fan out a release whose __version__ doesn't match its own tag
+        # A published release is always tagged from the commit checked out here, so this
+        # commit's __version__ must equal the tag being published. It caught nothing until
+        # v0.1.2 shipped with __version__ still reading "0.1.1" -- every caller pinned to
+        # that tag would have had verify-toolchain fail forever, for a reason invisible in
+        # the diff. Only applies to the release trigger: a workflow_dispatch re-propagating
+        # an older --tag is checking out today's main, not that tag's commit.
+        if: ${{ github.event_name == 'release' }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          installed="v$(python -c 'from thyn_security_toolchain import __version__; print(__version__)')"
+          if [ "$installed" != "$TAG" ]; then
+            echo "::error title=propagate::release $TAG published but thyn_security_toolchain.__version__ is $installed -- fix and re-release before fan-out runs"
+            exit 1
+          fi
+
       - name: Propagate
         env:
           GH_TOKEN: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
