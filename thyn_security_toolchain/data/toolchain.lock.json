@@ -1,0 +1,170 @@
+{
+  "schema": 1,
+  "generated": "2026-09-16",
+  "notes": [
+    "One version per tool for laptops, CI and the engine's SDK-export gates. Bump here, nowhere else.",
+    "Every asset is sha256-verified before it is executed. Archives yield exactly one member.",
+    "gitleaks/osv-scanner/trivy/actionlint digests come from the upstream checksum files shipped with each release.",
+    "opengrep ships no checksum file; its assets were verified with cosign against the release's sigstore",
+    "certificate (identity ^https://github.com/opengrep/opengrep/, issuer token.actions.githubusercontent.com)",
+    "and the digests below were computed from those verified files."
+  ],
+  "tools": {
+    "gitleaks": {
+      "version": "8.30.1",
+      "source": "https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1",
+      "verification": "gitleaks_8.30.1_checksums.txt",
+      "assets": {
+        "linux-x86_64": {
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz",
+          "sha256": "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+          "archive": "tar.gz",
+          "member": "gitleaks"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz",
+          "sha256": "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080",
+          "archive": "tar.gz",
+          "member": "gitleaks"
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz",
+          "sha256": "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5",
+          "archive": "tar.gz",
+          "member": "gitleaks"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz",
+          "sha256": "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709",
+          "archive": "tar.gz",
+          "member": "gitleaks"
+        }
+      }
+    },
+    "opengrep": {
+      "version": "1.30.0",
+      "source": "https://github.com/opengrep/opengrep/releases/tag/v1.30.0",
+      "verification": "cosign verify-blob (sigstore .cert/.sig per asset), digests computed locally 2026-09-16",
+      "assets": {
+        "linux-x86_64": {
+          "url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_manylinux_x86",
+          "sha256": "35779bdd72e92129c8df2a77f0c55e8c08356801ea92591ef32108d6b28d564c",
+          "archive": null
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_manylinux_aarch64",
+          "sha256": "a5d5a4a58ba5d46ff51e921663da1c2bba38f4b03987f4aeec87f16c6ad3ecae",
+          "archive": null
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_osx_arm64",
+          "sha256": "0f5bc3dec09d995c61331a4017b856ede508f90d95b018d95f1dc6166be89fdd",
+          "archive": null
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/opengrep/opengrep/releases/download/v1.30.0/opengrep_osx_x86",
+          "sha256": "650772a849a2986880982b7dea0371f96a75d354de95f94e8c1a2e6f8f6262d1",
+          "archive": null
+        }
+      }
+    },
+    "osv-scanner": {
+      "version": "2.6.0",
+      "source": "https://github.com/google/osv-scanner/releases/tag/v2.6.0",
+      "verification": "osv-scanner_SHA256SUMS",
+      "assets": {
+        "linux-x86_64": {
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64",
+          "sha256": "ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108",
+          "archive": null
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_arm64",
+          "sha256": "2c71403eb443d05891c4f268c3ad771cf4f16e5443463fd7851ef8f454d3c7e4",
+          "archive": null
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_darwin_arm64",
+          "sha256": "98c460dcd37de25819babd757d04542045b6243113e209edcd4d89fedb0256b4",
+          "archive": null
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_darwin_amd64",
+          "sha256": "60c5296637e977b28eeda5c7f13573e447659a632922737f94d11fa7e30ad6ca",
+          "archive": null
+        }
+      }
+    },
+    "trivy": {
+      "version": "0.74.0",
+      "source": "https://github.com/aquasecurity/trivy/releases/tag/v0.74.0",
+      "verification": "trivy_0.74.0_checksums.txt",
+      "assets": {
+        "linux-x86_64": {
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz",
+          "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a",
+          "archive": "tar.gz",
+          "member": "trivy"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
+          "sha256": "b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5",
+          "archive": "tar.gz",
+          "member": "trivy"
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_macOS-ARM64.tar.gz",
+          "sha256": "1caada5e0e2091909357c7525d3aa76f4b660b13821bc143b190c7483e31cc11",
+          "archive": "tar.gz",
+          "member": "trivy"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_macOS-64bit.tar.gz",
+          "sha256": "472816f6888dda689d075c30254d4210b4d1035acf365aa72332f584c2f60485",
+          "archive": "tar.gz",
+          "member": "trivy"
+        }
+      }
+    },
+    "actionlint": {
+      "version": "1.7.12",
+      "source": "https://github.com/rhysd/actionlint/releases/tag/v1.7.12",
+      "verification": "actionlint_1.7.12_checksums.txt",
+      "assets": {
+        "linux-x86_64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+          "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
+          "archive": "tar.gz",
+          "member": "actionlint"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_arm64.tar.gz",
+          "sha256": "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6",
+          "archive": "tar.gz",
+          "member": "actionlint"
+        },
+        "darwin-arm64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_arm64.tar.gz",
+          "sha256": "aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f",
+          "archive": "tar.gz",
+          "member": "actionlint"
+        },
+        "darwin-x86_64": {
+          "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_darwin_amd64.tar.gz",
+          "sha256": "5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644",
+          "archive": "tar.gz",
+          "member": "actionlint"
+        }
+      }
+    }
+  },
+  "rules": {
+    "opengrep-rules": {
+      "source": "https://github.com/opengrep/opengrep-rules",
+      "commit": "f1d2b562b414783763fd02a6ed2736eaed622efa",
+      "url": "https://github.com/opengrep/opengrep-rules/archive/f1d2b562b414783763fd02a6ed2736eaed622efa.tar.gz",
+      "sha256": "9a5f1cd5c625418cc1c776120123e2d4371df9bb66e099426b17c3488e13619d",
+      "license": "LGPL-2.1 with Commons Clause; fetched at scan time into the local cache, never redistributed by this repository"
+    }
+  }
+}

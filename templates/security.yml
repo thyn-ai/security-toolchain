@@ -1,0 +1,35 @@
+# Authoritative security gate -- re-runs the pre-push policy on a clean checkout.
+# Managed by thyn-ai/security-toolchain (propagate bumps the pin). Change `overlay`/`mode` here.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      measure_baseline:
+        description: "Measure security/baseline/*.txt on CI and upload as an artifact"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{{{ github.ref }}}}
+  cancel-in-progress: ${{{{ github.event_name == 'pull_request' }}}}
+
+jobs:
+  full:
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@{sha} # {tag}
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: read
+    with:
+      overlay: {overlay}
+      mode: {mode}
+      measure_baseline: ${{{{ github.event_name == 'workflow_dispatch' && inputs.measure_baseline == true }}}}

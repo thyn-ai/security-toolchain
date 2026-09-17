@@ -1,0 +1,70 @@
+name: thyn-sec setup
+description: >-
+  Install thyn-ai's pinned security toolchain (thyn-sec) on this runner. Referencing this
+  action makes GitHub deliver the whole repository at the pinned ref, so the Python package
+  installs from $GITHUB_ACTION_PATH with no extra checkout or token -- which is what lets a
+  private caller and a public caller use the same private-or-public toolchain.
+inputs:
+  python-version:
+    description: Python used to run thyn-sec (any 3.9+; stdlib only).
+    required: false
+    default: "3.12"
+  prefetch:
+    description: Fetch and verify every pinned scanner binary and the rules bundle up front.
+    required: false
+    default: "true"
+outputs:
+  ref:
+    description: The ref this action (and therefore the toolchain) was pinned at.
+    value: ${{ steps.meta.outputs.ref }}
+  cache-hit:
+    description: Whether the scanner cache was restored.
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        update-environment: false
+      id: py
+
+    - name: Toolchain metadata
+      id: meta
+      shell: bash
+      env:
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        echo "ref=${ACTION_REF}" >> "$GITHUB_OUTPUT"
+        echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore scanner cache
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cache/thyn-sec
+          ~/.cache/trivy
+        key: thyn-sec-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref }}-${{ steps.meta.outputs.week }}
+        restore-keys: |
+          thyn-sec-${{ runner.os }}-${{ runner.arch }}-${{ github.action_ref }}-
+
+    - name: Install thyn-sec
+      shell: bash
+      env:
+        PY: ${{ steps.py.outputs.python-path }}
+      run: |
+        set -euo pipefail
+        "$PY" -m venv "$RUNNER_TEMP/thyn-sec-venv"
+        "$RUNNER_TEMP/thyn-sec-venv/bin/python" -m pip install --quiet --disable-pip-version-check "$GITHUB_ACTION_PATH"
+        echo "$RUNNER_TEMP/thyn-sec-venv/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" --version
+
+    - name: Prefetch pinned scanners
+      if: ${{ inputs.prefetch == 'true' }}
+      shell: bash
+      env:
+        THYN_SEC_QUIET: "1"
+      run: |
+        "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" install all --rules --print-path

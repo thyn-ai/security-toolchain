@@ -1,0 +1,5 @@
+# Fixture: a world-readable bucket with none of the hardening trivy expects.
+resource "aws_s3_bucket" "logs" {
+  bucket = "thyn-fixture-logs"
+  acl    = "public-read"
+}

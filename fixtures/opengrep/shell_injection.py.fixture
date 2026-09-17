@@ -1,0 +1,12 @@
+"""Fixture: command injection through a shell."""
+
+import subprocess
+import sys
+
+
+def list_dir(user_input: str) -> int:
+    return subprocess.call("ls " + user_input, shell=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(list_dir(sys.argv[1]))

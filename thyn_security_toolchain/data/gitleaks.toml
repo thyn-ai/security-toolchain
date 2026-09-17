@@ -1,0 +1,44 @@
+# thyn-ai org-wide Gitleaks configuration.
+#
+# Extends the upstream default ruleset (so every new detector in a pinned gitleaks
+# release applies automatically) and allowlists only paths that are inert by
+# construction. Repositories may ship their own `.gitleaks.toml` (it replaces this
+# file) and a `.gitleaksignore` of fingerprints for individual, reviewed findings.
+# Real secrets are never allowlisted: rotate them and rewrite the history.
+
+title = "thyn-ai security toolchain"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Lockfiles and dependency manifests: integrity hashes, not credentials"
+paths = [
+  '''(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lock|bun\.lockb)$''',
+  '''(^|/)(uv\.lock|poetry\.lock|Pipfile\.lock|pixi\.lock|Cargo\.lock|go\.sum|composer\.lock|Gemfile\.lock)$''',
+]
+
+[[allowlists]]
+description = "Public keys and signed release manifests are meant to be committed"
+paths = [
+  '''\.pub$''',
+  '''(^|/)releases/authorization/[^/]+\.json$''',
+]
+
+[[allowlists]]
+description = "Vendored and generated trees are scanned where they originate"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)\.pixi/''',
+  '''(^|/)mojo_env/''',
+  '''(^|/)\.next/''',
+  '''(^|/)dist/''',
+  '''(^|/)build/''',
+]
+
+[[allowlists]]
+description = "Toolchain reports written by thyn-sec itself (contents are already redacted)"
+paths = [
+  '''(^|/)\.thyn-sec/''',
+]

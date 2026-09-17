@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thyn-security-toolchain"
+version = "0.1.0"
+description = "Pinned, checksum-verified local-first security toolchain (Gitleaks, Opengrep, OSV-Scanner, Trivy config, actionlint) as pre-commit hooks and a reusable GitHub Actions gate."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+# Deliberately zero runtime dependencies: pre-commit installs this package into an
+# isolated venv on every developer machine and every CI job; anything beyond the
+# standard library would be a second supply chain to pin.
+dependencies = []
+
+[project.scripts]
+thyn-sec = "thyn_security_toolchain.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["thyn_security_toolchain"]
+
+[tool.setuptools.package-data]
+thyn_security_toolchain = ["data/*.json", "data/*.toml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S"]
+ignore = ["S603", "S607"]  # we exec pinned, checksum-verified binaries by design
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: downloads pinned scanners and runs them against fixtures"]

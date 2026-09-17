@@ -1,0 +1,54 @@
+# Fan a toolchain release out to every repository in fleet.json as a pull request that
+# touches only the marker-delimited pre-commit block and the caller workflow pin.
+#
+# Needs a token that can push branches and open PRs across the org (fine-grained PAT or a
+# GitHub App installation token) in the TOOLCHAIN_PROPAGATE_TOKEN secret; without it the job
+# explains itself and exits 0 so a release is never blocked on fan-out.
+name: propagate
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Toolchain tag to propagate (default: latest release)"
+        type: string
+        default: ""
+      repos:
+        description: "Comma list of repos to limit to (default: all in fleet.json)"
+        type: string
+        default: ""
+      dry_run:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  propagate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Propagate
+        env:
+          GH_TOKEN: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          REPOS: ${{ inputs.repos }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice title=propagate::TOOLCHAIN_PROPAGATE_TOKEN is not set; run scripts/propagate.py locally with gh auth."
+            exit 0
+          fi
+          args=(--tag "$TAG")
+          [ -n "$REPOS" ] && args+=(--repos "$REPOS")
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          python scripts/propagate.py "${args[@]}"

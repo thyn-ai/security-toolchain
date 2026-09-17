@@ -1,0 +1,8 @@
+"""Fixture: a hard-coded cloud credential. The key id is split so this file never
+matches a secret scanner until the self-test joins it."""
+
+AWS_ACCESS_KEY_ID = "AKIA__JOIN__Q7Z3MPLW2K6XVBT4"
+
+
+def client():
+    return {"aws_access_key_id": AWS_ACCESS_KEY_ID}
