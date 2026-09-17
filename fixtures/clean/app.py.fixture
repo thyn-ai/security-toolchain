@@ -1,0 +1,18 @@
+"""Fixture: unremarkable code that must not produce a single finding."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+
+def read_config(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def git_head(repo: Path) -> str:
+    out = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    )
+    return out.stdout.strip()

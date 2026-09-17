@@ -1,0 +1,67 @@
+# The toolchain's own CI: unit tests, lint, and the integration proof that every fixture
+# trips exactly its owner tool and nothing else. Runs on standard hosted Linux only.
+name: self-test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    name: unit + lint (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --quiet --disable-pip-version-check -e ".[dev]" ruff
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m pytest -q -m "not integration"
+
+  integration:
+    name: fixtures trip exactly one owner each
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up thyn-sec from this checkout
+        uses: ./
+      - run: python -m pip install --quiet --disable-pip-version-check -e ".[dev]"
+      - run: python -m pytest -q -m integration
+      - name: The toolchain repo passes its own smoke gate
+        run: thyn-sec ci --tools gitleaks,opengrep,trivy --overlay python-uv --mode ratchet --changed ALL --out-dir "$RUNNER_TEMP/self"
+      - name: Pins are consistent in this repo
+        run: thyn-sec verify-toolchain
+
+  actionlint:
+    name: workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          prefetch: "false"
+      - run: thyn-sec actionlint .github/workflows/*.yml

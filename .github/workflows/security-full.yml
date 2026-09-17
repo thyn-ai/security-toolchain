@@ -1,0 +1,157 @@
+# Reusable authoritative security gate.
+#
+# Call it from a repository's .github/workflows/security.yml:
+#
+#   jobs:
+#     full:
+#       uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # vX.Y.Z
+#       permissions: { contents: read, security-events: write, pull-requests: read }
+#       with: { overlay: python-uv, mode: advisory }
+#
+# It re-runs exactly the policy the pre-push hooks run on a laptop, on a clean checkout, on
+# a standard GitHub-hosted runner. Scope on pull requests is the changed-file list (fail-closed
+# to a full scan); pushes to main and the weekly schedule always scan everything.
+#
+# The `thyn-ai/security-toolchain@vX.Y.Z` composite reference below is bumped by the release
+# process so that a tagged workflow always installs the toolchain of its own tag.
+name: security-full
+
+on:
+  workflow_call:
+    inputs:
+      overlay:
+        description: "Opengrep overlay: python-uv | site | pnpm-monorepo | engine | codna | smoke"
+        type: string
+        default: python-uv
+      mode:
+        description: "advisory (report only) | ratchet (fail on NEW high/critical vs security/baseline)"
+        type: string
+        default: advisory
+      tools:
+        description: "Comma list of owner tools to run"
+        type: string
+        default: gitleaks,opengrep,osv,trivy
+      runner_json:
+        description: "JSON array of runner labels. Standard GitHub-hosted only; billed labels are refused."
+        type: string
+        default: '["ubuntu-latest"]'
+      measure_baseline:
+        description: "Write security/baseline/*.txt from a full scan and upload them as an artifact"
+        type: boolean
+        default: false
+      python_version:
+        type: string
+        default: "3.12"
+
+permissions: {}
+
+jobs:
+  scan:
+    name: security gate
+    runs-on: ${{ fromJSON(inputs.runner_json) }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: read
+    env:
+      THYN_SEC_QUIET: "1"
+    steps:
+      - name: Refuse billed or self-hosted runner labels
+        env:
+          RUNNER_JSON: ${{ inputs.runner_json }}
+        run: |
+          case "$RUNNER_JSON" in
+            *-core*|*thyn-*|*larger*|*self-hosted*|*blacksmith*)
+              echo "::error title=thyn-sec::security-full runs on standard GitHub-hosted runners only (got $RUNNER_JSON)"
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up thyn-sec
+        id: setup
+        uses: thyn-ai/security-toolchain@v0.1.0
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Verify pins
+        env:
+          EXPECT_REF: ${{ steps.setup.outputs.ref }}
+        run: thyn-sec verify-toolchain --expect-ref "$EXPECT_REF"
+
+      - name: Derive changed files
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: thyn-sec changed-files --output "$RUNNER_TEMP/thyn-sec/changed.txt"
+
+      - name: Scan and gate
+        id: scan
+        env:
+          OVERLAY: ${{ inputs.overlay }}
+          MODE: ${{ inputs.mode }}
+          TOOLS: ${{ inputs.tools }}
+          MEASURE: ${{ inputs.measure_baseline }}
+        run: |
+          set -o pipefail
+          args=(ci --overlay "$OVERLAY" --mode "$MODE" --tools "$TOOLS"
+                --changed "$RUNNER_TEMP/thyn-sec/changed.txt" --out-dir "$RUNNER_TEMP/thyn-sec/out")
+          if [ "$MEASURE" = "true" ]; then args+=(--measure-baseline); fi
+          thyn-sec "${args[@]}"
+
+      - name: Upload Opengrep SARIF
+        if: ${{ always() && steps.scan.outputs.opengrep_sarif != '' && github.event.pull_request.head.repo.fork != true }}
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        continue-on-error: true
+        with:
+          sarif_file: ${{ steps.scan.outputs.opengrep_sarif }}
+          category: thyn-sec/opengrep
+
+      - name: Upload Trivy SARIF
+        if: ${{ always() && steps.scan.outputs.trivy_sarif != '' && github.event.pull_request.head.repo.fork != true }}
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        continue-on-error: true
+        with:
+          sarif_file: ${{ steps.scan.outputs.trivy_sarif }}
+          category: thyn-sec/trivy
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: thyn-sec-reports
+          path: ${{ runner.temp }}/thyn-sec/out
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload measured baseline
+        if: ${{ inputs.measure_baseline && steps.scan.outputs.baseline_files != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-baseline
+          path: security/baseline/
+          retention-days: 30
+
+      - name: How to commit the measured baseline
+        if: ${{ inputs.measure_baseline }}
+        env:
+          FILES: ${{ steps.scan.outputs.baseline_files }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo
+            echo "#### Commit this baseline"
+            echo
+            echo 'Measured on CI (this run). Download and commit it as-is -- never edit by hand:'
+            echo
+            echo '```bash'
+            echo "gh run download $RUN_ID -R $REPO -n security-baseline -D security/baseline"
+            echo "git add security/baseline && git commit -m 'security: measured baseline (run $RUN_ID)'"
+            echo '```'
+            echo
+            echo "Files: ${FILES:-none}"
+          } >> "$GITHUB_STEP_SUMMARY"

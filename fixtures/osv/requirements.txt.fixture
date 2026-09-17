@@ -1,0 +1,2 @@
+# Fixture: a dependency with published advisories (CVE-2018-18074 and later).
+requests==2.19.0

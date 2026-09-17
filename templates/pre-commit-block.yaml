@@ -1,0 +1,16 @@
+  # thyn-security-toolchain:begin -- managed by thyn-ai/security-toolchain (propagate). Edit args, not rev.
+  - repo: https://github.com/thyn-ai/security-toolchain
+    rev: {rev}
+    hooks:
+      - id: gitleaks-staged
+      - id: opengrep-changed
+        args: ["--overlay={overlay}"]
+      - id: actionlint
+      - id: verify-toolchain
+      - id: gitleaks-push
+      - id: opengrep-full
+        args: ["--overlay={overlay}"]
+      - id: osv-scan
+      - id: trivy-config
+      - id: security-fix-deps
+  # thyn-security-toolchain:end

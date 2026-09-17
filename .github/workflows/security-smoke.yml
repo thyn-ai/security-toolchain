@@ -1,0 +1,58 @@
+# Ultralight gate for repositories with no application code to speak of (issue trackers,
+# single-file actions, sites without a lint step): secrets in the working tree + pin
+# consistency, in well under three minutes. Fork-PR safe (read-only token, no SARIF upload).
+name: security-smoke
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "advisory (report only) | ratchet (any secret fails)"
+        type: string
+        default: advisory
+      runner_json:
+        type: string
+        default: '["ubuntu-latest"]'
+
+permissions: {}
+
+jobs:
+  smoke:
+    name: security smoke
+    runs-on: ${{ fromJSON(inputs.runner_json) }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      THYN_SEC_QUIET: "1"
+    steps:
+      - name: Refuse billed or self-hosted runner labels
+        env:
+          RUNNER_JSON: ${{ inputs.runner_json }}
+        run: |
+          case "$RUNNER_JSON" in
+            *-core*|*thyn-*|*larger*|*self-hosted*|*blacksmith*)
+              echo "::error title=thyn-sec::security-smoke runs on standard GitHub-hosted runners only (got $RUNNER_JSON)"
+              exit 1 ;;
+          esac
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up thyn-sec
+        id: setup
+        uses: thyn-ai/security-toolchain@v0.1.0
+        with:
+          prefetch: "false"
+
+      - name: Verify pins
+        env:
+          EXPECT_REF: ${{ steps.setup.outputs.ref }}
+        run: thyn-sec verify-toolchain --expect-ref "$EXPECT_REF"
+
+      - name: Secrets scan
+        env:
+          MODE: ${{ inputs.mode }}
+        run: thyn-sec ci --tools gitleaks --overlay smoke --mode "$MODE" --changed ALL --out-dir "$RUNNER_TEMP/thyn-sec/out"

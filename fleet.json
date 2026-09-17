@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Every thyn-ai repository the toolchain manages, with its opengrep overlay and caller workflow.",
+    "workflow: full = security-full.yml (all four owner tools); smoke = security-smoke.yml (gitleaks + pins).",
+    "sync_safe_paths: for repositories mirrored from elsewhere, the only paths propagate may touch.",
+    "python: adds ruff hooks to a freshly generated .pre-commit-config.yaml (never to an existing one).",
+    "Excluded on purpose: decimas, decimas-site (empty); codna-app-smoke, codna-app-e2e-smoke-1783715773,",
+    "codna-private-test, test-codna-app-e2e (deliberately broken e2e fixtures)."
+  ],
+  "toolchain": { "repo": "thyn-ai/security-toolchain", "default_branch": "main" },
+  "defaults": { "mode": "advisory", "workflow": "full", "auto_merge": false, "ruff_rev": "v0.12.0" },
+  "repos": {
+    "algenta-integrations": { "overlay": "pnpm-monorepo", "wave": 1, "python": true },
+    "algenta-sdk": {
+      "overlay": "pnpm-monorepo", "wave": 1, "python": false,
+      "sync_safe_paths": [".pre-commit-config.yaml", ".github/", "security/", "scripts/", "tests/"]
+    },
+    "codna": { "overlay": "codna", "wave": 2, "python": false },
+    "algenta": { "overlay": "engine", "wave": 2, "python": false },
+    "telys": { "overlay": "pnpm-monorepo", "wave": 3, "python": false },
+    "cohenta": { "overlay": "pnpm-monorepo", "wave": 3, "python": true },
+    "sqai": { "overlay": "pnpm-monorepo", "wave": 3, "python": true },
+    "escrypto": { "overlay": "pnpm-monorepo", "wave": 3, "python": true },
+    "discord-server": { "overlay": "python-uv", "wave": 4, "python": false },
+    "accounts": { "overlay": "site", "wave": 4, "python": false },
+    "algenta-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "codna-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "cohenta-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "sqai-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "telys-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "thyn-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "escrypto-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
+    "codna-action": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true },
+    "feedback": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true }
+  }
+}

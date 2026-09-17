@@ -1,0 +1,105 @@
+# Hook manifest for https://github.com/thyn-ai/security-toolchain
+#
+# Consume from a repository's .pre-commit-config.yaml:
+#
+#   default_install_hook_types: [pre-commit, pre-push]
+#   repos:
+#     - repo: https://github.com/thyn-ai/security-toolchain
+#       rev: v0.1.0
+#       hooks:
+#         - id: gitleaks-staged
+#         - id: opengrep-changed
+#           args: ["--overlay=python-uv"]
+#         ...
+#
+# Stages are set here so callers only pick ids. Every hook is stdlib Python that fetches
+# the pinned, sha256-verified scanner binary on first use (~/.cache/thyn-sec).
+
+- id: gitleaks-staged
+  name: gitleaks (staged changes)
+  description: Refuse to commit a secret. Owner tool for the secrets category.
+  entry: thyn-sec gitleaks-staged
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: opengrep-changed
+  name: opengrep (changed files)
+  description: SAST over the files in this commit, using the repo's overlay rule packs.
+  entry: thyn-sec opengrep-changed
+  language: python
+  require_serial: true
+  types_or: [python, javascript, jsx, ts, tsx, yaml, json, terraform, dockerfile, shell, html, toml]
+  stages: [pre-commit]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: actionlint
+  name: actionlint (workflow syntax)
+  description: Lint GitHub Actions workflow files.
+  entry: thyn-sec actionlint
+  language: python
+  files: ^\.github/workflows/[^/]+\.ya?ml$
+  stages: [pre-commit]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: verify-toolchain
+  name: verify security toolchain pins
+  description: Hook rev, CI SHA pin and installed toolchain version must agree.
+  entry: thyn-sec verify-toolchain
+  language: python
+  pass_filenames: false
+  files: ^(\.pre-commit-config\.yaml|\.github/workflows/security[^/]*\.ya?ml)$
+  stages: [pre-commit]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: gitleaks-push
+  name: gitleaks (commits being pushed)
+  description: Scan exactly the commit range about to leave this machine.
+  entry: thyn-sec gitleaks-push
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: opengrep-full
+  name: opengrep (full repo vs baseline)
+  description: Full SAST; fails only on findings not in security/baseline/opengrep.txt.
+  entry: thyn-sec opengrep-full
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: osv-scan
+  name: osv-scanner (dependencies vs baseline)
+  description: Known vulnerabilities in lockfiles; fails only on new HIGH/CRITICAL.
+  entry: thyn-sec osv-scan
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: trivy-config
+  name: trivy config (IaC vs baseline)
+  description: Dockerfile/Terraform/Kubernetes/Helm misconfiguration; fails only on new HIGH/CRITICAL.
+  entry: thyn-sec trivy-config
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]
+  minimum_pre_commit_version: "3.2.0"
+
+- id: security-fix-deps
+  name: osv-scanner guided remediation (manual)
+  description: Prints the experimental `osv-scanner fix` commands; never runs automatically.
+  entry: thyn-sec security-fix-deps
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [manual]
+  minimum_pre_commit_version: "3.2.0"

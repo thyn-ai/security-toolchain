@@ -1,0 +1,56 @@
+# The toolchain dogfoods itself. `pip install -e .` first so the `thyn-sec` entry point
+# is on PATH for the local hooks below.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.8
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+  - repo: local
+    hooks:
+      - id: gitleaks-staged
+        name: gitleaks (staged changes)
+        entry: thyn-sec gitleaks-staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: opengrep-changed
+        name: opengrep (changed files)
+        entry: thyn-sec opengrep-changed --overlay=python-uv
+        language: system
+        types_or: [python, yaml, json, toml]
+        exclude: ^fixtures/
+        stages: [pre-commit]
+      - id: actionlint
+        name: actionlint
+        entry: thyn-sec actionlint
+        language: system
+        files: ^\.github/workflows/[^/]+\.ya?ml$
+        stages: [pre-commit]
+      - id: gitleaks-push
+        name: gitleaks (commits being pushed)
+        entry: thyn-sec gitleaks-push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: unit-tests
+        name: unit tests
+        entry: python -m pytest -q -m "not integration"
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

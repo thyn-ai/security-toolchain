@@ -1,0 +1,19 @@
+# Ultralight security gate for repositories without application code.
+# Managed by thyn-ai/security-toolchain (propagate bumps the pin).
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    uses: thyn-ai/security-toolchain/.github/workflows/security-smoke.yml@{sha} # {tag}
+    permissions:
+      contents: read
+    with:
+      mode: {mode}
