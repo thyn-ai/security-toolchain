@@ -43,7 +43,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.0
+        uses: thyn-ai/security-toolchain@v0.1.1
         with:
           prefetch: "false"
 

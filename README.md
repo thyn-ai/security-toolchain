@@ -25,7 +25,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -45,13 +45,22 @@ repos:
 # .github/workflows/security.yml
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.0
-    permissions: { contents: read, security-events: write, pull-requests: read }
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.1
+    permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
 
 ```text
 security/baseline/<tool>.txt      # measured on CI, may only shrink (see below)
+```
+
+If the repository runs Dependabot on `github-actions`, exclude this toolchain so the CI
+pin and the pre-commit `rev` are only ever bumped together by `propagate.py`. Dependabot
+names a reusable-workflow dependency by its full path, so the pattern needs a wildcard:
+
+```yaml
+    ignore:
+      - dependency-name: "thyn-ai/security-toolchain*"
 ```
 
 `pre-commit install` installs both stages. The first run fetches the pinned binaries into

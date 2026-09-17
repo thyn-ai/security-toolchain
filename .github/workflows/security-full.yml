@@ -5,7 +5,7 @@
 #   jobs:
 #     full:
 #       uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # vX.Y.Z
-#       permissions: { contents: read, security-events: write, pull-requests: read }
+#       permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
 #       with: { overlay: python-uv, mode: advisory }
 #
 # It re-runs exactly the policy the pre-push hooks run on a laptop, on a clean checkout, on
@@ -54,6 +54,7 @@ jobs:
       contents: read
       security-events: write
       pull-requests: read
+      actions: read # SARIF upload needs it while the calling repository is private
     env:
       THYN_SEC_QUIET: "1"
     steps:
@@ -74,7 +75,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.0
+        uses: thyn-ai/security-toolchain@v0.1.1
         with:
           python-version: ${{ inputs.python_version }}
 
