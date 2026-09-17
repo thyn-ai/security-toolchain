@@ -72,3 +72,14 @@ def test_smoke_callers_are_not_given_sarif_permissions():
     out = propagate.upsert_workflow(rendered, "smoke", SHA_NEW, "v0.1.1", "smoke", "advisory")
     assert "actions:" not in out and "security-events" not in out
     assert f"@{SHA_NEW} # v0.1.1" in out
+
+
+def test_new_precommit_config_ends_with_exactly_one_newline():
+    block = propagate.render_block("v0.1.1", "python-uv")
+    for python in (False, True):
+        out = propagate.upsert_block(None, block, python, "v0.12.0")
+        assert out.endswith("# thyn-security-toolchain:end\n"), out[-80:]
+        assert not out.endswith("\n\n")
+        assert "\n\n\n" not in out
+        # re-applying to the generated file is a no-op (block-replace path)
+        assert propagate.upsert_block(out, block, python, "v0.12.0") == out
