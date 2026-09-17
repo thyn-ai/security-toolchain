@@ -103,9 +103,44 @@ def upsert_workflow(
     existing: str | None, kind: str, sha: str, tag: str, overlay: str, mode: str
 ) -> str:
     if existing is not None and _USES_RE.search(existing):
-        return _USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
+        text = _USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
+        return _carry_forward_permissions(text, kind)
     template = TEMPLATES / ("security.yml" if kind == "full" else "security-smoke.yml")
     return template.read_text(encoding="utf-8").format(sha=sha, tag=tag, overlay=overlay, mode=mode)
+
+
+# A caller job may grant no less than the reusable workflow's job requests, or GitHub
+# rejects the run at startup ("requesting X, but is only allowed none"). When a release
+# adds a permission to the callee, every existing caller must gain it in the same bump.
+_REQUIRED_CALLER_PERMISSIONS = {
+    "full": (
+        "contents: read",
+        "security-events: write",
+        "pull-requests: read",
+        "actions: read # SARIF upload needs it while this repository is private",
+    ),
+    "smoke": ("contents: read",),
+}
+_PERMISSIONS_BLOCK_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]+)permissions:\n(?P<body>(?:(?P=indent)[ \t]+\S[^\n]*\n)+)"
+)
+
+
+def _carry_forward_permissions(text: str, kind: str) -> str:
+    """Ensure the caller job's `permissions:` block lists everything the callee needs."""
+    m = _PERMISSIONS_BLOCK_RE.search(text)
+    if not m:
+        return text
+    indent = m.group("indent")
+    body = m.group("body")
+    present = {ln.strip().split(":")[0] for ln in body.splitlines() if ln.strip()}
+    missing = [p for p in _REQUIRED_CALLER_PERMISSIONS[kind] if p.split(":")[0] not in present]
+    if not missing:
+        return text
+    inner = body.splitlines()[0][len(indent) :]
+    inner_indent = inner[: len(inner) - len(inner.lstrip())]
+    addition = "".join(f"{indent}{inner_indent}{p}\n" for p in missing)
+    return text[: m.end()] + addition + text[m.end() :]
 
 
 def plan(repo_dir: Path, cfg: dict, defaults: dict, tag: str, sha: str) -> list[tuple[Path, str]]:
