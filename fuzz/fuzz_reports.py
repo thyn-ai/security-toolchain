@@ -28,11 +28,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _support import SeedProvider, check, json_value, run_main, text
 
-from _support import SeedProvider, check, json_value, run_main, text  # noqa: E402
-
-from thyn_security_toolchain import gate  # noqa: E402
+from thyn_security_toolchain import gate
 
 WORK = Path(tempfile.mkdtemp(prefix="thyn-sec-fuzz-reports-"))
 REPORT = WORK / "report.json"

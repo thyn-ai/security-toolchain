@@ -18,14 +18,11 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _support import SeedProvider, check, json_value, mutate, run_main
 
-from _support import SeedProvider, check, json_value, mutate, run_main  # noqa: E402
-
-from thyn_security_toolchain import lock  # noqa: E402
+from thyn_security_toolchain import lock
 
 SHIPPED = json.loads(lock.LOCK_PATH.read_text(encoding="utf-8"))
 KEYS = (

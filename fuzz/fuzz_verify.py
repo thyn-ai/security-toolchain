@@ -24,11 +24,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _support import SeedProvider, check, run_main, text
 
-from _support import SeedProvider, check, run_main, text  # noqa: E402
-
-from thyn_security_toolchain import verify  # noqa: E402
+from thyn_security_toolchain import verify
 
 WORK = Path(tempfile.mkdtemp(prefix="thyn-sec-fuzz-verify-"))
 TAG = verify.installed_tag()

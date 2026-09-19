@@ -33,12 +33,12 @@ def check(condition: bool, what: str) -> None:
 class Provider(Protocol):
     """The subset of ``atheris.FuzzedDataProvider`` the harnesses consume."""
 
-    def ConsumeBool(self) -> bool: ...  # noqa: N802 - atheris spelling
-    def ConsumeIntInRange(self, low: int, high: int) -> int: ...  # noqa: N802
-    def ConsumeUnicodeNoSurrogates(self, count: int) -> str: ...  # noqa: N802
-    def ConsumeBytes(self, count: int) -> bytes: ...  # noqa: N802
-    def ConsumeFloat(self) -> float: ...  # noqa: N802
-    def PickValueInList(self, values: Sequence[Any]) -> Any: ...  # noqa: N802
+    def ConsumeBool(self) -> bool: ...
+    def ConsumeIntInRange(self, low: int, high: int) -> int: ...
+    def ConsumeUnicodeNoSurrogates(self, count: int) -> str: ...
+    def ConsumeBytes(self, count: int) -> bytes: ...
+    def ConsumeFloat(self) -> float: ...
+    def PickValueInList(self, values: Sequence[Any]) -> Any: ...
     def remaining_bytes(self) -> int: ...
 
 
@@ -57,15 +57,15 @@ class SeedProvider:
     def remaining_bytes(self) -> int:
         return len(self._data) - self._pos
 
-    def ConsumeBytes(self, count: int) -> bytes:  # noqa: N802
+    def ConsumeBytes(self, count: int) -> bytes:
         chunk = self._data[self._pos : self._pos + count]
         self._pos += len(chunk)
         return chunk
 
-    def ConsumeBool(self) -> bool:  # noqa: N802
+    def ConsumeBool(self) -> bool:
         return bool(self.ConsumeBytes(1)[:1] and self._data[self._pos - 1] & 1)
 
-    def ConsumeIntInRange(self, low: int, high: int) -> int:  # noqa: N802
+    def ConsumeIntInRange(self, low: int, high: int) -> int:
         if high <= low:
             return low
         span = high - low + 1
@@ -73,19 +73,19 @@ class SeedProvider:
         raw = self.ConsumeBytes(width)
         return low + (int.from_bytes(raw, "little") % span if raw else 0)
 
-    def ConsumeUnicodeNoSurrogates(self, count: int) -> str:  # noqa: N802
+    def ConsumeUnicodeNoSurrogates(self, count: int) -> str:
         raw = self.ConsumeBytes(count)
         text = raw.decode("utf-8", errors="replace")
         return "".join(ch for ch in text if not 0xD800 <= ord(ch) <= 0xDFFF)
 
-    def ConsumeFloat(self) -> float:  # noqa: N802
+    def ConsumeFloat(self) -> float:
         raw = self.ConsumeBytes(8)
         if len(raw) < 8:
             return 0.0
         value = struct.unpack("<d", raw)[0]
         return value if value == value and abs(value) != float("inf") else 0.0
 
-    def PickValueInList(self, values: Sequence[Any]) -> Any:  # noqa: N802
+    def PickValueInList(self, values: Sequence[Any]) -> Any:
         return values[self.ConsumeIntInRange(0, len(values) - 1)]
 
 

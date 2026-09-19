@@ -17,14 +17,11 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _support import SeedProvider, check, json_value, run_main, text
 
-from _support import SeedProvider, check, json_value, run_main, text  # noqa: E402
-
-from thyn_security_toolchain import hooks  # noqa: E402
+from thyn_security_toolchain import hooks
 
 SHIPPED = json.loads(hooks.OVERLAYS_PATH.read_text(encoding="utf-8"))["overlays"]
 NAMES = ("base", "python", "javascript", "site", "python-uv", "python-javascript", "a", "b", "c")
@@ -86,7 +83,7 @@ def _declared(overlays: dict[str, Any], names: list[str], field: str) -> list[st
 
 def resolve(overlays: dict[str, Any], name: str) -> None:
     original = hooks.load_overlays
-    hooks.load_overlays = lambda: overlays  # type: ignore[assignment]
+    hooks.load_overlays = lambda: overlays
     try:
         try:
             packs, excludes = hooks.resolve_overlay(name)
@@ -109,7 +106,7 @@ def resolve(overlays: dict[str, Any], name: str) -> None:
         check(packs == first_seen, "packs are not in parents-first order")
         check((packs, excludes) == hooks.resolve_overlay(name), "resolution is not repeatable")
     finally:
-        hooks.load_overlays = original  # type: ignore[assignment]
+        hooks.load_overlays = original
 
 
 def test_one_input(data: bytes, provider: type = SeedProvider) -> None:
