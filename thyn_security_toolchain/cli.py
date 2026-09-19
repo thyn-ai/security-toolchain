@@ -24,7 +24,9 @@ SCAN_TESTS_HELP = (
     "conftest.py, *.test.ts|tsx|js, *.spec.ts|tsx|js, testdata/, fixtures/); default: test "
     "paths are out of scope, what SAST finds there is the fixture, not a defect. Lifts this "
     "toolchain's exclusion only: Opengrep's built-in .semgrepignore still skips tests/ and "
-    "test/ unless the repository has a .semgrepignore of its own"
+    "test/ (on full scans and, because --force-exclude applies it to named files too, on "
+    "PR-scoped runs) unless the repository has a .semgrepignore of its own (an empty one is "
+    "enough)"
 )
 
 

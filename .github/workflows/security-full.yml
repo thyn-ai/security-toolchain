@@ -44,7 +44,7 @@ on:
         type: boolean
         default: false
       opengrep_scan_tests:
-        description: "Also run Opengrep over test code: **/tests/**, **/test/**, **/__tests__/**, test_*.py, *_test.py, conftest.py, *.test.ts|tsx|js, *.spec.ts|tsx|js, **/testdata/**, **/fixtures/**. Default: test paths are out of scope for the gate and for code scanning alike -- what SAST finds there is the fixture (a hard-coded test JWT secret, decode-without-verify on a token the test signed), not a defect. true lifts this toolchain's exclusion only; Opengrep's built-in .semgrepignore still skips tests/ and test/ unless the repository has a .semgrepignore of its own."
+        description: "Also run Opengrep over test code: **/tests/**, **/test/**, **/__tests__/**, test_*.py, *_test.py, conftest.py, *.test.ts|tsx|js, *.spec.ts|tsx|js, **/testdata/**, **/fixtures/**. Default: test paths are out of scope for the gate and for code scanning alike -- what SAST finds there is the fixture (a hard-coded test JWT secret, decode-without-verify on a token the test signed), not a defect. true lifts this toolchain's exclusion only; Opengrep's built-in .semgrepignore still skips tests/ and test/ (on full scans and, because --force-exclude applies it to named files too, on PR-scoped runs) unless the repository has a .semgrepignore of its own (an empty one is enough)."
         type: boolean
         default: false
       python_version:

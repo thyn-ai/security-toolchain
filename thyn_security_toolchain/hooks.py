@@ -39,8 +39,10 @@ OPENGREP_MAX_TARGET_BYTES = "1000000"
 # benchmarks/ and scripts/ are real code and stay in. Matched relative to the project root, so
 # a clone that itself lives under a directory named tests/ or fixtures/ is unaffected.
 # The opt-in (scan_tests) lifts exactly this list; Opengrep's built-in default .semgrepignore
-# still skips tests/ and test/ on a directory walk until the repository commits a
-# .semgrepignore of its own (an empty one is enough -- probed on 1.30.0).
+# still skips tests/ and test/ -- on a directory walk and, because --force-exclude applies it
+# to files named on the command line too, on the opengrep-changed hook and a PR-scoped CI
+# scan alike -- until the repository commits a .semgrepignore of its own (an empty one is
+# enough; both shapes probed on 1.30.0).
 OPENGREP_TEST_PATH_GLOBS = (
     "**/tests/**",
     "**/test/**",

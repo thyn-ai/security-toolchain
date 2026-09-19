@@ -81,8 +81,9 @@ def test_path_note(scan_tests: bool, root: Path) -> str:
         note = "opengrep: test paths scanned (opengrep_scan_tests: true)"
         if not (root / ".semgrepignore").is_file():
             note += (
-                "; Opengrep's built-in .semgrepignore still skips tests/ and test/ on a full "
-                "scan -- commit a .semgrepignore (even an empty one) to lift that too"
+                "; Opengrep's built-in .semgrepignore still skips tests/ and test/ (on full "
+                "scans and, because --force-exclude applies it to named files too, on "
+                "PR-scoped runs) -- commit a .semgrepignore (even an empty one) to lift that too"
             )
         return note
     return (

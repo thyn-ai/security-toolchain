@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from thyn_security_toolchain import changed, hooks
+from thyn_security_toolchain import changed, ci, hooks
 from thyn_security_toolchain.ci import run_ci
-from thyn_security_toolchain.cli import build_parser, main
+from thyn_security_toolchain.cli import SCAN_TESTS_HELP, build_parser, main
 from thyn_security_toolchain.repo import DEFAULT_SKIP_DIRS
 
 # The policy as documented in the README and the security-full.yml input, spelled out so a
@@ -139,8 +139,23 @@ def test_run_ci_forwards_the_flag_and_the_summary_says_so(
     assert "opengrep: test paths scanned (opengrep_scan_tests: true)" in summary2
     assert "out of scope by policy" not in summary2
     # No .semgrepignore in the repo: the scanner's own default still skips tests/ and test/,
-    # and the summary has to say so rather than let the flag look fully effective.
+    # and the summary has to say so rather than let the flag look fully effective --
+    # naming both scan shapes, because --force-exclude makes Opengrep apply that built-in
+    # ignore to files named on the command line as well (1.30.0), so a PR-scoped run is no
+    # exception.
     assert "built-in .semgrepignore still skips tests/ and test/" in summary2
+    assert "on full scans" in summary2 and "on PR-scoped runs" in summary2
+    assert "--force-exclude" in summary2
+
+    # The same residual is reported on an actual PR-scoped run (named files, no .semgrepignore).
+    (root / "app.py").write_text("x = 1\n")
+    out_pr = tmp_path / "out_pr"
+    run_ci(root, "python-uv", "advisory", ["app.py"], out_pr, ("opengrep",), scan_tests=True)
+    assert recorded[-1][-1] == "app.py" and "--force-exclude" in recorded[-1]
+    summary_pr = (out_pr / "summary.md").read_text()
+    assert "opengrep: test paths scanned (opengrep_scan_tests: true)" in summary_pr
+    assert "built-in .semgrepignore still skips tests/ and test/" in summary_pr
+    assert "on PR-scoped runs" in summary_pr
 
     (root / ".semgrepignore").write_text("")
     out3 = tmp_path / "out3"
@@ -148,6 +163,25 @@ def test_run_ci_forwards_the_flag_and_the_summary_says_so(
     summary3 = (out3 / "summary.md").read_text()
     assert "opengrep: test paths scanned (opengrep_scan_tests: true)" in summary3
     assert "built-in .semgrepignore" not in summary3
+
+
+def test_test_path_note_names_both_scan_shapes(tmp_path: Path):
+    """The built-in .semgrepignore residual is not a full-scan-only caveat. --force-exclude
+    makes Opengrep apply its default ignore list to files named on the command line as well
+    (probed on 1.30.0: tests/t.py named explicitly is skipped with the flag, scanned without
+    it, and scanned once the repo has an empty .semgrepignore), so the opt-in note has to say
+    the residual applies on PR-scoped runs too, not only on a directory walk."""
+    note = ci.test_path_note(True, tmp_path)
+    assert note.startswith("opengrep: test paths scanned (opengrep_scan_tests: true)")
+    assert "built-in .semgrepignore still skips tests/ and test/" in note
+    assert "on full scans" in note and "on PR-scoped runs" in note
+    assert "--force-exclude" in note
+    assert "commit a .semgrepignore (even an empty one)" in note
+    assert "on a full scan --" not in note  # the v0.1.11 wording that claimed full-scan-only
+
+    (tmp_path / ".semgrepignore").write_text("")
+    assert ".semgrepignore" not in ci.test_path_note(True, tmp_path)
+    assert ".semgrepignore" not in ci.test_path_note(False, tmp_path)
 
 
 def test_ci_command_forwards_the_flag(recorded: list, tmp_path: Path, actions_env: Path):
@@ -166,6 +200,12 @@ def test_workflow_input_and_readme_document_the_same_policy():
     readme = (repo / "README.md").read_text(encoding="utf-8")
     assert "opengrep_scan_tests:" in workflow and "--opengrep-scan-tests" in workflow
     assert "opengrep_scan_tests: true" in readme and "--opengrep-scan-tests" in readme
+    # Every mirror of the opt-in caveat names both scan shapes: the built-in .semgrepignore
+    # residual holds on a full scan and, via --force-exclude, on PR-scoped runs too.
+    mirrors = {"workflow": workflow, "readme": readme, "cli help": SCAN_TESTS_HELP}
+    for name, text in mirrors.items():
+        assert ".semgrepignore" in text and "--force-exclude" in text, name
+        assert "full scan" in text and "PR-scoped" in text, name
     for glob in DOCUMENTED:
         if glob.endswith("/**"):
             assert glob in workflow and f"`{glob}`" in readme, glob

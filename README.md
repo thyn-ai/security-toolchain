@@ -102,12 +102,14 @@ The same gate runs everywhere: `thyn-sec ci` on CI, one tool at a time in the ho
   holds for the pre-commit hooks, the PR-scoped CI scan and the full scan alike, and the
   results never exist -- not in the gate, not in the code-scanning upload. Opengrep's default
   `.semgrepignore` already skips `tests/` and `test/`, but a repository's own `.semgrepignore`
-  replaces that default and files named on the command line bypass it; this policy holds
-  either way. `benchmarks/`, `scripts/` and every other non-test path stay in scope. A
-  repository that wants its tests scanned sets `opengrep_scan_tests: true` on
-  `security-full.yml` (`thyn-sec ci --opengrep-scan-tests`; `--scan-tests` on the
-  `opengrep-changed` / `opengrep-full` hooks). That lifts this toolchain's exclusion only:
-  Opengrep's built-in `.semgrepignore` still skips `tests/` and `test/` on a full scan until
+  replaces that default and files named on the command line bypass it without
+  `--force-exclude`; this policy holds either way. `benchmarks/`, `scripts/` and every other
+  non-test path stay in scope. A repository that wants its tests scanned sets
+  `opengrep_scan_tests: true` on `security-full.yml` (`thyn-sec ci --opengrep-scan-tests`;
+  `--scan-tests` on the `opengrep-changed` / `opengrep-full` hooks). That lifts this
+  toolchain's exclusion only: Opengrep's built-in `.semgrepignore` still skips `tests/` and
+  `test/` -- on a full scan and, because `--force-exclude` applies it to files named on the
+  command line too, on the PR-scoped CI scan and the `opengrep-changed` hook alike -- until
   the repository commits a `.semgrepignore` of its own (an empty one is enough); the gate
   summary says so when it applies.
 
