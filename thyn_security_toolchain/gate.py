@@ -180,6 +180,47 @@ def demote_low_confidence_levels(path: Path) -> int:
     return demoted
 
 
+def drop_audit_results(path: Path) -> int:
+    """Rewrite an Opengrep SARIF in place without its low-confidence / audit results.
+
+    Demoting them (above) keeps the code-scanning check green, but every demoted result still
+    opens an alert, and registry audit rules fire on *intended* use: dangerous-subprocess-use-audit
+    on any non-literal argv, non-literal-import on ``importlib.import_module``,
+    dynamic-urllib-use-detected on any computed URL. thyn-ai/algenta-sdk and algenta-integrations
+    each carried 20+ such alerts that could neither be fixed nor closed. The gate parses the full
+    SARIF before this runs, so the console summary and the reports artifact still count them; only
+    the copy handed to code scanning loses them, and GitHub then closes the open alerts as fixed.
+
+    Same rule class as :func:`demote_low_confidence_levels`: with ``--no-rewrite-rule-ids`` the
+    registry's audit rules surface under their bare id (``non-literal-import``, not
+    ``python.lang.security.audit.non-literal-import``), so the ``LOW CONFIDENCE`` tag is what
+    still identifies them; ``subprocess-shell-true`` (MEDIUM CONFIDENCE, also under audit/ in
+    the registry) and every other real rule stay. Rule metadata is left as is: a rule without
+    results is valid SARIF, and Opengrep results carry no ``ruleIndex`` that would have to be
+    kept in step. Returns how many results were removed. Idempotent; a file with nothing to
+    drop is not rewritten.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    dropped = 0
+    for run in data.get("runs", []):
+        rules = {
+            r.get("id", ""): r
+            for r in (run.get("tool", {}).get("driver", {}) or {}).get("rules", []) or []
+        }
+        results = run.get("results", []) or []
+        kept = []
+        for res in results:
+            rid = res.get("ruleId", "")
+            if not _is_low_confidence_rule(rid, rules.get(rid, {})):
+                kept.append(res)
+        if len(kept) != len(results):
+            dropped += len(results) - len(kept)
+            run["results"] = kept
+    if dropped:
+        path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    return dropped
+
+
 def parse_opengrep_sarif(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: list[Finding] = []
