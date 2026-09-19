@@ -64,7 +64,7 @@ jobs:
       - uses: ./
         with:
           prefetch: "false"
-      - name: The action must not shadow the caller's Python (regression: sdk-v1.0.12 signing step)
+      - name: "The action must not shadow the caller's Python (regression - sdk-v1.0.12 signing step)"
         # caller python is not shadowed: only `thyn-sec` may have been added to PATH
         shell: bash
         run: |
