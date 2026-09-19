@@ -19,6 +19,13 @@ from .repo import existing_files, git_root
 from .verify import verify_repo
 
 DEFAULT_OVERLAY = "python-uv"
+SCAN_TESTS_HELP = (
+    "also run Opengrep over test code (tests/, test/, __tests__/, test_*.py, *_test.py, "
+    "conftest.py, *.test.ts|tsx|js, *.spec.ts|tsx|js, testdata/, fixtures/); default: test "
+    "paths are out of scope, what SAST finds there is the fixture, not a defect. Lifts this "
+    "toolchain's exclusion only: Opengrep's built-in .semgrepignore still skips tests/ and "
+    "test/ unless the repository has a .semgrepignore of its own"
+)
 
 
 def _root(args: argparse.Namespace) -> Path:
@@ -64,13 +71,17 @@ def cmd_opengrep_changed(args: argparse.Namespace) -> int:
     files = existing_files(root, args.files)
     if not files:
         return 0
-    findings = hooks.opengrep(root, args.overlay, files, _tmp_report(".sarif"))
+    findings = hooks.opengrep(
+        root, args.overlay, files, _tmp_report(".sarif"), scan_tests=args.scan_tests
+    )
     return _local_gate("opengrep", root, findings)
 
 
 def cmd_opengrep_full(args: argparse.Namespace) -> int:
     root = _root(args)
-    findings = hooks.opengrep(root, args.overlay, None, _tmp_report(".sarif"))
+    findings = hooks.opengrep(
+        root, args.overlay, None, _tmp_report(".sarif"), scan_tests=args.scan_tests
+    )
     return _local_gate("opengrep", root, findings)
 
 
@@ -156,6 +167,7 @@ def cmd_ci(args: argparse.Namespace) -> int:
         tools,
         args.measure_baseline,
         upload_audit=args.opengrep_upload_audit,
+        scan_tests=args.opengrep_scan_tests,
     )
 
 
@@ -235,6 +247,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("opengrep-changed", cmd_opengrep_changed, "SAST over the given files (pre-commit)")
     p.add_argument("--overlay", default=DEFAULT_OVERLAY)
+    p.add_argument("--scan-tests", action="store_true", help=SCAN_TESTS_HELP)
     p.add_argument("files", nargs="*")
     p = add(
         "opengrep-full",
@@ -242,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
         "SAST over the whole repo vs security/baseline/opengrep.txt (pre-push)",
     )
     p.add_argument("--overlay", default=DEFAULT_OVERLAY)
+    p.add_argument("--scan-tests", action="store_true", help=SCAN_TESTS_HELP)
 
     add(
         "osv-scan",
@@ -296,6 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also hand Opengrep audit / low-confidence results to code scanning "
         "(default: console summary and reports artifact only)",
     )
+    p.add_argument("--opengrep-scan-tests", action="store_true", help=SCAN_TESTS_HELP)
 
     p = add("install", cmd_install, "fetch and verify pinned binaries into the cache")
     p.add_argument("tool", choices=(*TOOLS, "all"))

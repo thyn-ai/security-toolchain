@@ -54,7 +54,7 @@ def _sarif() -> dict:
     }
 
 
-def _stub_opengrep(root: Path, overlay: str, targets, report: Path):
+def _stub_opengrep(root: Path, overlay: str, targets, report: Path, scan_tests: bool = False):
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(_sarif()), encoding="utf-8")
     demote_low_confidence_levels(report)  # exactly what the real hooks.opengrep does
