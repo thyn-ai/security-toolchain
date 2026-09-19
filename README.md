@@ -25,7 +25,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.1
+    rev: v0.1.9
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -45,7 +45,7 @@ repos:
 # .github/workflows/security.yml
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.1
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.9
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
