@@ -152,4 +152,49 @@ pytest -m integration           # downloads the pinned scanners, proves one-owne
 Releasing: bump `version` in `pyproject.toml` and `__init__.py`, bump the
 `thyn-ai/security-toolchain@vX.Y.Z` reference in both reusable workflows, tag `vX.Y.Z`,
 publish the release. `propagate.yml` (or `scripts/propagate.py`) opens the pin-bump pull
-requests across the fleet.
+requests across the fleet -- see the next section for what the workflow needs.
+
+## Running propagate from GitHub Actions
+
+`propagate.yml` runs on every published release, and on `workflow_dispatch` with `tag`,
+`repos` and `dry_run`. It needs a token that can push a branch and open a pull request in
+every fleet repository, including a change to `.github/workflows/security.yml`. The default
+`GITHUB_TOKEN` cannot (enterprise policy forbids it from creating pull requests, and it has
+no `workflows` permission), so the job reads one of two credentials. With neither present it
+posts a `::notice` and exits 0 -- which is what every run through v0.1.10 did, because the
+secret never existed; each of those releases was fanned out from a laptop instead.
+
+**GitHub App (preferred).** Two repository secrets, named exactly as in
+`algenta-integrations` so the owner sets them the same way:
+
+| secret                            | value                                    |
+|-----------------------------------|------------------------------------------|
+| `ALGENTA_SDK_SYNC_APP_ID`         | the App's numeric id (public)            |
+| `ALGENTA_SDK_SYNC_APP_PRIVATE_KEY` | the App's private key, the PEM as downloaded |
+
+```bash
+gh secret set ALGENTA_SDK_SYNC_APP_ID -R thyn-ai/security-toolchain --body <app-id>
+gh secret set ALGENTA_SDK_SYNC_APP_PRIVATE_KEY -R thyn-ai/security-toolchain < <path-to-pem>
+```
+
+The App must be installed on every repository in `fleet.json` with the repository permissions
+**Contents: read and write**, **Pull requests: read and write** and **Workflows: read and
+write** (the bump rewrites `.github/workflows/security.yml`; GitHub refuses the push without
+it). Each run mints a short-lived installation token narrowed to exactly those plus
+`metadata: read`, and the pull requests are authored by the App's bot user, with no personal
+or assistant attribution. A repository the App is not installed on shows up as one `FAILED`
+line for that repository while the rest fan out. If the token cannot be minted at all (a
+permission missing from the App, the App not installed on the organization, a rotated key),
+the job fails with an `::error` that says so rather than silently doing nothing.
+
+**Fine-grained PAT (alternative).** `TOOLCHAIN_PROPAGATE_TOKEN`: a fine-grained personal
+access token limited to the fleet repositories with the same three permissions (Contents,
+Pull requests, Workflows: read and write). Commits then carry `propagate.py`'s default
+author. The App secrets take precedence when both are present.
+
+```bash
+gh secret set TOOLCHAIN_PROPAGATE_TOKEN -R thyn-ai/security-toolchain
+```
+
+Every run writes a step summary naming the credential mode and, per repository, whether a
+pull request was opened, the repository was already at the tag, or the fan-out failed.

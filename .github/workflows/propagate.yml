@@ -1,9 +1,23 @@
 # Fan a toolchain release out to every repository in fleet.json as a pull request that
 # touches only the marker-delimited pre-commit block and the caller workflow pin.
 #
-# Needs a token that can push branches and open PRs across the org (fine-grained PAT or a
-# GitHub App installation token) in the TOOLCHAIN_PROPAGATE_TOKEN secret; without it the job
-# explains itself and exits 0 so a release is never blocked on fan-out.
+# Credentials, in order of preference. The `secrets` context is not visible to job- or
+# step-level `if:`, so one step reads them into env and exports a `mode` output that every
+# later step gates on:
+#
+#   app   ALGENTA_SDK_SYNC_APP_ID + ALGENTA_SDK_SYNC_APP_PRIVATE_KEY -- the org's release App,
+#         under the same secret names algenta-integrations/auto-release.yml uses. A short-lived
+#         installation token is minted per run, narrowed to contents / pull-requests / workflows
+#         write + metadata read, and the fan-out commits are authored by the App's bot user.
+#   pat   TOOLCHAIN_PROPAGATE_TOKEN -- a fine-grained PAT with the same three permissions on the
+#         fleet repositories; commits carry propagate.py's default author.
+#   none  neither -- the job says so (::notice + step summary) and exits 0, so a release is
+#         never blocked on fan-out. This was every run through v0.1.10: the secret never
+#         existed, so each release was fanned out from a laptop instead.
+#
+# The default GITHUB_TOKEN cannot do this job: enterprise policy forbids Actions from creating
+# pull requests with it, and a token without `workflows` cannot push the
+# .github/workflows/security.yml pin bump at all. README: "Running propagate from GitHub Actions".
 name: propagate
 
 on:
@@ -56,18 +70,135 @@ jobs:
             exit 1
           fi
 
-      - name: Propagate
+      - name: Decide which credentials this run has
+        id: creds
         env:
-          GH_TOKEN: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
+          APP_ID: ${{ secrets.ALGENTA_SDK_SYNC_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY }}
+          PAT: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_ID:-}" ] && [ -n "${APP_PRIVATE_KEY:-}" ]; then
+            mode=app
+          elif [ -n "${PAT:-}" ]; then
+            mode=pat
+          else
+            mode=none
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "credential mode: $mode"
+
+      - name: Explain the skip (no credentials configured)
+        if: steps.creds.outputs.mode == 'none'
+        run: |
+          set -euo pipefail
+          msg="no credentials for fan-out. Set ALGENTA_SDK_SYNC_APP_ID + ALGENTA_SDK_SYNC_APP_PRIVATE_KEY (GitHub App, preferred) or TOOLCHAIN_PROPAGATE_TOKEN (fine-grained PAT) on thyn-ai/security-toolchain -- README, 'Running propagate from GitHub Actions'. Until then: scripts/propagate.py locally with gh auth."
+          echo "::notice title=propagate::$msg"
+          {
+            echo "### propagate skipped -- credential mode: none"
+            echo
+            echo "$msg"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # `repositories:` is deliberately NOT passed. With `owner` set and no list, the token
+      # covers every repository the App installation grants (the action logs "Creating token
+      # for all repositories owned by thyn-ai"), narrowed by the permission-* inputs below. A
+      # static list copied from fleet.json would make minting fail outright the moment one
+      # fleet repository is missing from the installation -- turning a per-repo gap, which
+      # propagate.py reports as one FAILED line while the rest fan out, into a total no-op --
+      # and could not follow the `repos` dispatch input anyway. A repository the App is not
+      # installed on stays unreachable either way.
+      - name: Mint a scoped App installation token
+        id: app-token
+        if: steps.creds.outputs.mode == 'app'
+        # A failed mint (the App lacks a permission requested below, is not installed on the
+        # org, or the key was rotated) must not end the job on the action's bare error: the
+        # Propagate step sees an empty token and explains what to fix.
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # The numeric App id (public). v3 marks `app-id` deprecated in favour of `client-id`;
+          # both feed the same JWT issuer field, so keeping the sibling workflow's input costs
+          # one deprecation annotation and nothing else.
+          app-id: ${{ secrets.ALGENTA_SDK_SYNC_APP_ID }}
+          private-key: ${{ secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY }}
+          owner: thyn-ai
+          # Least privilege: what `gh repo clone` + `git push` + `gh pr create` need, plus
+          # `workflows` because the bump rewrites .github/workflows/security.yml and GitHub
+          # refuses the push without it. The App must hold each of these or minting fails.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-metadata: read
+
+      - name: Propagate
+        if: steps.creds.outputs.mode != 'none'
+        env:
+          MODE: ${{ steps.creds.outputs.mode }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          PAT: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           REPOS: ${{ inputs.repos }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::notice title=propagate::TOOLCHAIN_PROPAGATE_TOKEN is not set; run scripts/propagate.py locally with gh auth."
-            exit 0
-          fi
+          set -euo pipefail
           args=(--tag "$TAG")
           [ -n "$REPOS" ] && args+=(--repos "$REPOS")
           [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
-          python scripts/propagate.py "${args[@]}"
+
+          case "$MODE" in
+            app)
+              if [ -z "${APP_TOKEN:-}" ]; then
+                msg="App credentials are set but no installation token was minted (see the step above). Usual causes: the App lacks a permission this run requests (contents write, pull requests write, workflows write), it is not installed on the thyn-ai org, or ALGENTA_SDK_SYNC_APP_PRIVATE_KEY is not the App's current key. README, 'Running propagate from GitHub Actions'."
+                echo "::error title=propagate::$msg"
+                {
+                  echo "### propagate failed -- credential mode: app (token mint failed)"
+                  echo
+                  echo "$msg"
+                } >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+              export GH_TOKEN="$APP_TOKEN"
+              # Commits come from the App's bot user, not from a person and not from an
+              # assistant. The noreply address is <bot user id>+<slug>[bot]@..., and the bot
+              # user id is not the installation id, so look it up rather than hard-code it.
+              bot="${APP_SLUG}[bot]"
+              bot_id="$(gh api "users/${bot}" --jq .id)"
+              args+=(--git-user "$bot" --git-email "${bot_id}+${bot}@users.noreply.github.com" --no-attribution)
+              ;;
+            pat)
+              export GH_TOKEN="$PAT"
+              ;;
+          esac
+
+          # `gh repo clone` authenticates through gh, but propagate.py's plain `git push` needs
+          # a credential helper: this points git at `gh auth git-credential`, which serves
+          # GH_TOKEN, so no token is ever written into a remote URL.
+          gh auth setup-git
+
+          log="$RUNNER_TEMP/propagate.log"
+          rc=0
+          python scripts/propagate.py "${args[@]}" 2>&1 | tee "$log" || rc=$?
+
+          count() { grep -c -E "$1" "$log" || true; }
+          {
+            echo "### propagate -- credential mode: $MODE"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| tag | \`${TAG:-latest release}\` |"
+            echo "| repos | \`${REPOS:-all in fleet.json}\` |"
+            echo "| dry run | \`${DRY_RUN:-false}\` |"
+            echo "| pull requests opened | $(count '^[^ ]+: https://github\.com/.+/pull/[0-9]+$') |"
+            echo "| would change (dry run) | $(count '^[^ ]+: would change ') |"
+            echo "| already at tag | $(count '^[^ ]+: already at ') |"
+            echo "| skipped by fleet.json | $(count '^[^ ]+: skipped -- ') |"
+            echo "| failed | $(count '^[^ ]+: FAILED$') |"
+            echo "| propagate.py exit code | $rc |"
+            echo
+            echo '```text'
+            cat "$log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
