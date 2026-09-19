@@ -222,6 +222,10 @@ def test_pr_without_token_and_without_history_is_full(
     "path,manifest,iac",
     [
         ("pnpm-lock.yaml", True, False),
+        ("typescript/fuse-mojo/package-lock.json", True, False),  # thyn-ai/mojo-kernels (npm)
+        ("yarn.lock", True, False),
+        ("web/bun.lock", True, False),
+        ("pixi.lock", True, False),
         ("python/uv.lock", True, False),
         ("apps/api-server/requirements.txt", True, False),
         ("pyproject.toml", True, False),

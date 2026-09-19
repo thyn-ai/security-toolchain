@@ -4,7 +4,12 @@
     "One owner per category: secrets belong to gitleaks (no generic/secrets here), Dockerfile/Terraform/",
     "Kubernetes misconfiguration belongs to trivy config (no dockerfile/, terraform/, yaml/kubernetes here).",
     "Bicep and docker-compose are included because trivy cannot parse them. A pack that does not exist in",
-    "the bundle is skipped with a warning so a rules bump never breaks every repo at once."
+    "the bundle is skipped with a warning so a rules bump never breaks every repo at once.",
+    "An overlay selects Opengrep packs and nothing else. gitleaks, osv-scanner (a --recursive walk that reads",
+    "every lockfile it supports: package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, pixi.lock,",
+    "...) and trivy config never see the overlay name, so name an overlay after its pack set, never after a",
+    "package manager. pnpm-monorepo is the pre-0.1.12 name of python-javascript, kept as an alias for callers",
+    "already propagated with it; it never selected lockfiles (thyn-ai/mojo-kernels#9 read it that way)."
   ],
   "overlays": {
     "base": {
@@ -68,7 +73,8 @@
     "smoke": { "extends": ["base"], "packs": [], "exclude_rules": [] },
     "site": { "extends": ["javascript"], "packs": [], "exclude_rules": [] },
     "python-uv": { "extends": ["python"], "packs": [], "exclude_rules": [] },
-    "pnpm-monorepo": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] },
+    "python-javascript": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] },
+    "pnpm-monorepo": { "extends": ["python-javascript"], "packs": [], "exclude_rules": [] },
     "engine": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] },
     "codna": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] }
   }

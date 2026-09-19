@@ -25,7 +25,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.11
+    rev: v0.1.12
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -45,7 +45,7 @@ repos:
 # .github/workflows/security.yml
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.11
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.12
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
@@ -120,12 +120,21 @@ everything.
 
 ## Overlays
 
-An overlay is the set of Opengrep rule packs for a repository class:
-`python-uv`, `site` (Next.js/TypeScript), `pnpm-monorepo` (Python + TypeScript),
-`engine`, `codna`, `smoke`. Packs come from a pinned commit of
+An overlay is the set of Opengrep rule packs for a repository class, and nothing more:
+`python-uv` (Python), `site` (Next.js/TypeScript), `python-javascript` (Python +
+JavaScript/TypeScript), `engine`, `codna`, `smoke`. Packs come from a pinned commit of
 [opengrep-rules](https://github.com/opengrep/opengrep-rules), fetched into the cache at
 scan time; a repository can add its own rules under `security/opengrep/*.yml`.
 `thyn-sec overlays -v` lists what each one loads.
+
+The overlay name never reaches the other scanners. OSV-Scanner walks the whole tree
+(`osv-scanner scan source --recursive`) and reads every lockfile it supports --
+`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `uv.lock`, `poetry.lock`,
+`requirements.txt`, `pixi.lock`, `go.sum`, `Cargo.lock`, ... -- so an npm workspace, a pnpm
+workspace and a uv project are scanned identically under any overlay, and on a pull request
+a change to any of those files puts the scan in scope. Trivy `config` and Gitleaks take the
+whole tree as well. `pnpm-monorepo` is the pre-0.1.12 name of `python-javascript`, kept as
+an alias so repositories onboarded with it keep working; it never selected lockfiles.
 
 ## Pinning and verification
 
