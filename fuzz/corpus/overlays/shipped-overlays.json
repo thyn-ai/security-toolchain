@@ -1,0 +1,81 @@
+{
+  "_comment": [
+    "Opengrep rule packs per repository class, as directories inside the pinned opengrep-rules bundle.",
+    "One owner per category: secrets belong to gitleaks (no generic/secrets here), Dockerfile/Terraform/",
+    "Kubernetes misconfiguration belongs to trivy config (no dockerfile/, terraform/, yaml/kubernetes here).",
+    "Bicep and docker-compose are included because trivy cannot parse them. A pack that does not exist in",
+    "the bundle is skipped with a warning so a rules bump never breaks every repo at once.",
+    "An overlay selects Opengrep packs and nothing else. gitleaks, osv-scanner (a --recursive walk that reads",
+    "every lockfile it supports: package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, uv.lock, pixi.lock,",
+    "...) and trivy config never see the overlay name, so name an overlay after its pack set, never after a",
+    "package manager. pnpm-monorepo is the pre-0.1.12 name of python-javascript, kept as an alias for callers",
+    "already propagated with it; it never selected lockfiles (thyn-ai/mojo-kernels#9 read it that way)."
+  ],
+  "overlays": {
+    "base": {
+      "packs": [
+        "yaml/github-actions/security",
+        "generic/ci/security",
+        "yaml/docker-compose/security",
+        "generic/bicep/security",
+        "bash/lang/security",
+        "bash/curl/security"
+      ],
+      "exclude_rules": []
+    },
+    "python": {
+      "extends": ["base"],
+      "packs": [
+        "python/lang/security",
+        "python/flask/security",
+        "python/django/security",
+        "python/fastapi/security",
+        "python/requests/security",
+        "python/sqlalchemy/security",
+        "python/jwt/security",
+        "python/cryptography/security",
+        "python/pycryptodome/security",
+        "python/jinja2/security",
+        "python/sh/security",
+        "python/aws-lambda/security",
+        "python/pymongo/security",
+        "python/docker/security",
+        "python/boto3/security"
+      ],
+      "exclude_rules": ["hardcoded-token"]
+    },
+    "javascript": {
+      "extends": ["base"],
+      "packs": [
+        "javascript/lang/security",
+        "javascript/browser/security",
+        "javascript/express/security",
+        "javascript/jsonwebtoken/security",
+        "javascript/jose/security",
+        "javascript/jwt-simple/security",
+        "javascript/passport-jwt/security",
+        "javascript/node-crypto/security",
+        "javascript/sequelize/security",
+        "javascript/shelljs/security",
+        "javascript/vm2/security",
+        "javascript/sandbox/security",
+        "javascript/serialize-javascript/security",
+        "javascript/xml2json/security",
+        "javascript/node-expat/security",
+        "javascript/sax/security",
+        "javascript/aws-lambda/security",
+        "typescript/lang/security",
+        "typescript/react/security",
+        "typescript/nestjs/security"
+      ],
+      "exclude_rules": []
+    },
+    "smoke": { "extends": ["base"], "packs": [], "exclude_rules": [] },
+    "site": { "extends": ["javascript"], "packs": [], "exclude_rules": [] },
+    "python-uv": { "extends": ["python"], "packs": [], "exclude_rules": [] },
+    "python-javascript": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] },
+    "pnpm-monorepo": { "extends": ["python-javascript"], "packs": [], "exclude_rules": [] },
+    "engine": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] },
+    "codna": { "extends": ["python", "javascript"], "packs": [], "exclude_rules": [] }
+  }
+}

@@ -1,0 +1,5 @@
+a.py
+sub/b.ts
+Dockerfile
+infra/main.tf
+pnpm-lock.yaml
