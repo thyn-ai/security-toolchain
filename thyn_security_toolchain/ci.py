@@ -9,6 +9,7 @@ on *how it is judged*.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,6 +20,7 @@ from .gate import (
     Finding,
     GateResult,
     annotate,
+    drop_audit_results,
     evaluate,
     markdown_summary,
     read_baseline,
@@ -34,6 +36,7 @@ LOCK_TOOL_NAME = {
     "trivy": "trivy",
     "gitleaks": "gitleaks",
 }
+CODE_SCANNING_SARIF = "opengrep.code-scanning.sarif"
 
 
 def _gh_output(**pairs: str) -> None:
@@ -51,6 +54,25 @@ def _gh_summary(markdown: str) -> None:
         return
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(markdown)
+
+
+def code_scanning_sarif(report: Path, notes: list[str]) -> Path:
+    """The Opengrep SARIF handed to code scanning: a copy of *report* minus its audit results.
+
+    The gate has already parsed the full file, so the console summary and the reports artifact
+    keep every finding; only GitHub's alert list stops filling with audit hints on intended
+    subprocess / importlib / urllib use (see :func:`gate.drop_audit_results`).
+    """
+    upload = report.with_name(CODE_SCANNING_SARIF)
+    shutil.copyfile(report, upload)
+    dropped = drop_audit_results(upload)
+    if dropped:
+        notes.append(
+            f"opengrep: {dropped} audit / low-confidence result(s) kept out of the code-scanning "
+            "upload; they still count in the gate summary and stay in opengrep.sarif "
+            "(opengrep_upload_audit: true uploads them as warnings)"
+        )
+    return upload
 
 
 def gate_findings(tool: str, root: Path, findings: Sequence[Finding], mode: str) -> GateResult:
@@ -71,6 +93,7 @@ def run_ci(
     out_dir: Path,
     tools: Sequence[str] = TOOL_ORDER,
     measure_baseline: bool = False,
+    upload_audit: bool = False,
 ) -> int:
     if mode not in ("advisory", "ratchet"):
         raise SystemExit(f"--mode must be advisory or ratchet, got {mode!r}")
@@ -103,7 +126,8 @@ def run_ci(
             all_findings["opengrep"] = findings
             results.append(gate_findings("opengrep", root, findings, mode))
             if report.is_file():
-                outputs["opengrep_sarif"] = str(report)
+                upload = report if upload_audit else code_scanning_sarif(report, notes)
+                outputs["opengrep_sarif"] = str(upload)
 
     if "osv" in tools:
         if changed_mod.any_match(changed, changed_mod.MANIFEST_RE):

@@ -318,3 +318,101 @@ def test_demotion_leaves_a_sarif_without_audit_rules_untouched(tmp_path: Path):
     p.write_text(original)
     assert demote_low_confidence_levels(p) == 0
     assert p.read_text() == original
+
+
+def _upload_sarif() -> dict:
+    """Shaped like a real thyn-sec run: opengrep scans with --no-rewrite-rule-ids, so registry
+    audit rules surface under their bare id and only the LOW CONFIDENCE tag still marks them;
+    results carry no level of their own (they inherit the rule default) and no ruleIndex."""
+    rules = [
+        {  # audit by id (and tag): python/lang/security/audit/dangerous-subprocess-use-audit
+            "id": "dangerous-subprocess-use-audit",
+            "defaultConfiguration": {"level": "warning"},
+            "properties": {"precision": "very-high", "tags": ["CWE-78", "LOW CONFIDENCE"]},
+        },
+        {  # audit by tag only: python/lang/security/audit/non-literal-import, bare id
+            "id": "non-literal-import",
+            "defaultConfiguration": {"level": "warning"},
+            "properties": {"precision": "very-high", "tags": ["CWE-706", "LOW CONFIDENCE"]},
+        },
+        {  # real: also under audit/ in the registry, but MEDIUM CONFIDENCE -- must stay
+            "id": "subprocess-shell-true",
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"precision": "very-high", "tags": ["CWE-78", "MEDIUM CONFIDENCE"]},
+        },
+        {  # real, no confidence tag at all
+            "id": "yaml.github-actions.security.run-shell-injection",
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"tags": ["CWE-78", "security"]},
+        },
+    ]
+    results = [
+        {"ruleId": rules[0]["id"], "message": {"text": "audit"}, "locations": _loc("a.py", 3)},
+        {"ruleId": rules[2]["id"], "message": {"text": "real"}, "locations": _loc("a.py", 3)},
+        {"ruleId": rules[1]["id"], "message": {"text": "low"}, "locations": _loc("b.py", 9)},
+        {"ruleId": rules[3]["id"], "message": {"text": "ci"}, "locations": _loc("w.yml", 1)},
+        {"ruleId": rules[1]["id"], "message": {"text": "low"}, "locations": _loc("c.py", 2)},
+    ]
+    return _sarif(results, rules)
+
+
+def test_audit_and_low_confidence_results_are_dropped_from_the_upload_sarif(tmp_path: Path):
+    from thyn_security_toolchain.gate import drop_audit_results
+
+    doc = _upload_sarif()
+    before_rules = json.loads(json.dumps(doc["runs"][0]["tool"]["driver"]["rules"]))
+    before_results = json.loads(json.dumps(doc["runs"][0]["results"]))
+    p = tmp_path / "opengrep.code-scanning.sarif"
+    p.write_text(json.dumps(doc))
+
+    assert drop_audit_results(p) == 3  # 1 audit-id + 2 bare-id LOW CONFIDENCE
+    run = json.loads(p.read_text())["runs"][0]
+    assert [r["ruleId"] for r in run["results"]] == [
+        "subprocess-shell-true",
+        "yaml.github-actions.security.run-shell-injection",
+    ]
+    # Kept results and every rule's metadata are byte-for-byte what the scanner wrote.
+    assert run["results"] == [before_results[1], before_results[3]]
+    assert run["tool"]["driver"]["rules"] == before_rules
+    assert json.loads(p.read_text())["version"] == "2.1.0"
+
+    after = p.read_text()
+    assert drop_audit_results(p) == 0  # idempotent
+    assert p.read_text() == after
+
+    # The gate still parses the full file, so nothing is lost for the console summary.
+    full = tmp_path / "opengrep.sarif"
+    full.write_text(json.dumps(doc))
+    assert len(parse_opengrep_sarif(full)) == 5
+
+
+def test_drop_composes_with_the_demotion_and_leaves_a_clean_sarif_untouched(tmp_path: Path):
+    from thyn_security_toolchain.gate import demote_low_confidence_levels, drop_audit_results
+
+    doc = _upload_sarif()
+    doc["runs"][0]["tool"]["driver"]["rules"][0]["defaultConfiguration"]["level"] = "error"
+    p = tmp_path / "opengrep.sarif"
+    p.write_text(json.dumps(doc))
+    assert demote_low_confidence_levels(p) == 1  # what hooks.opengrep does first
+    assert drop_audit_results(p) == 3
+    run = json.loads(p.read_text())["runs"][0]
+    by_id = {r["id"]: r["defaultConfiguration"]["level"] for r in run["tool"]["driver"]["rules"]}
+    assert by_id["dangerous-subprocess-use-audit"] == "warning"  # demotion kept for the record
+    assert by_id["subprocess-shell-true"] == "error"  # real rules keep their level
+
+    clean = tmp_path / "clean.sarif"
+    original = json.dumps(
+        _sarif(
+            [{"ruleId": "subprocess-shell-true", "message": {"text": "real"}}],
+            [
+                {
+                    "id": "subprocess-shell-true",
+                    "defaultConfiguration": {"level": "error"},
+                    "properties": {"tags": ["MEDIUM CONFIDENCE"]},
+                }
+            ],
+        )
+    )
+    clean.write_text(original)
+    assert drop_audit_results(clean) == 0
+    assert clean.read_text() == original

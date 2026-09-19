@@ -39,6 +39,10 @@ on:
         description: "Write security/baseline/*.txt from a full scan and upload them as an artifact"
         type: boolean
         default: false
+      opengrep_upload_audit:
+        description: "Also upload Opengrep audit / low-confidence results (LOW CONFIDENCE tag, *.audit.* or *-audit ids) to code scanning as warnings. Default: they stay in the console summary and the reports artifact only."
+        type: boolean
+        default: false
       python_version:
         type: string
         default: "3.12"
@@ -75,7 +79,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.9 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
+        uses: thyn-ai/security-toolchain@v0.1.10 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
         with:
           python-version: ${{ inputs.python_version }}
 
@@ -96,14 +100,18 @@ jobs:
           MODE: ${{ inputs.mode }}
           TOOLS: ${{ inputs.tools }}
           MEASURE: ${{ inputs.measure_baseline }}
+          UPLOAD_AUDIT: ${{ inputs.opengrep_upload_audit }}
         run: |
           set -o pipefail
           args=(ci --overlay "$OVERLAY" --mode "$MODE" --tools "$TOOLS"
                 --changed "$RUNNER_TEMP/thyn-sec/changed.txt" --out-dir "$RUNNER_TEMP/thyn-sec/out")
           if [ "$MEASURE" = "true" ]; then args+=(--measure-baseline); fi
+          if [ "$UPLOAD_AUDIT" = "true" ]; then args+=(--opengrep-upload-audit); fi
           thyn-sec "${args[@]}"
 
       - name: Upload Opengrep SARIF
+        # opengrep_sarif names the code-scanning copy: audit / low-confidence results are dropped from
+        # it unless opengrep_upload_audit is true. The full opengrep.sarif stays in the reports artifact.
         if: ${{ always() && steps.scan.outputs.opengrep_sarif != '' && github.event.pull_request.head.repo.fork != true }}
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         continue-on-error: true
