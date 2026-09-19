@@ -9,8 +9,12 @@
 #       with: { overlay: python-uv, mode: advisory }
 #
 # It re-runs exactly the policy the pre-push hooks run on a laptop, on a clean checkout, on
-# a standard GitHub-hosted runner. Scope on pull requests is the changed-file list (fail-closed
-# to a full scan); pushes to main and the weekly schedule always scan everything.
+# a standard GitHub-hosted runner. Scope on pull requests and on pushes to non-default
+# branches is the changed-file list (fail-closed to a full scan); pushes to the default
+# branch and the weekly schedule always scan everything. `thyn-sec changed-files` enforces
+# the default-branch rule itself (not the checkout depth): GitHub closes every code-scanning
+# alert missing from the newest SARIF upload for a ref+category, so a partial upload for
+# the default branch would close alerts in untouched files and reopen them later.
 #
 # The `thyn-ai/security-toolchain@vX.Y.Z` composite reference below is bumped by the release
 # process so that a tagged workflow always installs the toolchain of its own tag.

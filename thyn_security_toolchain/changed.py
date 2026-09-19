@@ -2,8 +2,16 @@
 
 Mirrors the engine's blast-radius selector in ``.github/workflows/ci.yml``: on a
 ``pull_request`` event the authoritative list is ``GET /pulls/{n}/files`` (needs no
-local history); on ``push`` it is ``git diff before..after``; anything that cannot be
-derived with certainty returns ``ALL`` so the scan widens rather than narrows.
+local history); on ``push`` to a non-default branch it is ``git diff before...after``;
+anything that cannot be derived with certainty returns ``ALL`` so the scan widens rather
+than narrows.
+
+A push to the repository's default branch is always ``ALL``, by policy rather than by
+accident. GitHub marks every code-scanning alert that is absent from the newest SARIF
+upload for a ref+category as fixed, so a partial upload for ``refs/heads/<default>`` would
+close alerts in untouched files and reopen them on the next full run. Until this rule
+existed the promise only held because a shallow ``actions/checkout`` made the diff fail
+and fall back to ``ALL``.
 
 Callers that already know the diff (the engine's ``id: impact`` step) can hand it over
 verbatim through ``THYN_SEC_CHANGED_FILES`` (a path to a newline-separated file, or
@@ -163,6 +171,28 @@ def _git_diff(base: str, head: str, cwd: str | None = None) -> list[str] | None:
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
+def _pushed_default_branch(event: dict) -> str | None:
+    """Name of the default branch when the pushed ref *is* that branch, else None.
+
+    The default branch comes from the event payload (``repository.default_branch``); the
+    pushed ref from ``GITHUB_REF`` (falling back to the payload's ``ref``) or, when only
+    the short name is available, from ``GITHUB_REF_NAME``. A tag that happens to share
+    the default branch's name (``GITHUB_REF_TYPE=tag``) does not count.
+    """
+    default = ((event.get("repository") or {}).get("default_branch") or "").strip()
+    if not default:
+        return None
+    ref = os.environ.get("GITHUB_REF") or event.get("ref") or ""
+    if ref == f"refs/heads/{default}":
+        return default
+    if ref:
+        return None  # a fully qualified ref that is not the default branch
+    ref_name = os.environ.get("GITHUB_REF_NAME", "")
+    if ref_name == default and os.environ.get("GITHUB_REF_TYPE", "branch") != "tag":
+        return default
+    return None
+
+
 def from_github_event() -> Changed | None:
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
@@ -190,8 +220,16 @@ def from_github_event() -> Changed | None:
         _log("could not derive PR changed files; widening to ALL")
         return ALL
     if event_name == "push":
+        default = _pushed_default_branch(event)
+        if default:
+            _log(
+                f"push to default branch {default!r}: scanning everything so the "
+                "code-scanning alert set for the ref is never narrowed by a partial upload"
+            )
+            return ALL
         before, after = event.get("before"), event.get("after")
         if not before or before == ZERO_SHA or not after:
+            _log("push without a usable before/after pair (new branch?); widening to ALL")
             return ALL
         files = _git_diff(before, after)
         return sorted(set(files)) if files is not None else ALL
