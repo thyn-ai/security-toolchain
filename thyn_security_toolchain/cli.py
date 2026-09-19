@@ -147,7 +147,16 @@ def cmd_ci(args: argparse.Namespace) -> int:
         if args.out_dir
         else Path(tempfile.mkdtemp(prefix="thyn-sec-ci-"))
     )
-    return run_ci(root, args.overlay, args.mode, changed, out_dir, tools, args.measure_baseline)
+    return run_ci(
+        root,
+        args.overlay,
+        args.mode,
+        changed,
+        out_dir,
+        tools,
+        args.measure_baseline,
+        upload_audit=args.opengrep_upload_audit,
+    )
 
 
 def cmd_install(args: argparse.Namespace) -> int:
@@ -280,6 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tools", default=",".join(TOOL_ORDER), help="comma list of tools to run")
     p.add_argument(
         "--measure-baseline", action="store_true", help="write security/baseline/*.txt (CI only)"
+    )
+    p.add_argument(
+        "--opengrep-upload-audit",
+        action="store_true",
+        help="also hand Opengrep audit / low-confidence results to code scanning "
+        "(default: console summary and reports artifact only)",
     )
 
     p = add("install", cmd_install, "fetch and verify pinned binaries into the cache")

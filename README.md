@@ -25,7 +25,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.9
+    rev: v0.1.10
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -45,7 +45,7 @@ repos:
 # .github/workflows/security.yml
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.9
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.10
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
@@ -86,6 +86,13 @@ The same gate runs everywhere: `thyn-sec ci` on CI, one tool at a time in the ho
 * Secrets are never baselined. Allowlist a reviewed false positive through
   `.gitleaksignore` (fingerprints) or `.gitleaks.toml` (paths); rotate anything real.
 * Suppressions live in those files, never in inline `nosemgrep` / `# nosec` comments.
+* Opengrep **audit rules** -- registry rules tagged `LOW CONFIDENCE` or with `.audit.` /
+  `-audit` in their id (`dangerous-subprocess-use-audit`, `non-literal-import`,
+  `dynamic-urllib-use-detected`, ...) -- flag intended subprocess, import and URL use. They
+  score MEDIUM so they never block, they are counted in the console summary and kept in the
+  `thyn-sec-reports` artifact, but they are **left out of the SARIF uploaded to code
+  scanning** so the alert list stays actionable. A repository that wants them as
+  code-scanning warnings sets `opengrep_upload_audit: true` on `security-full.yml`.
 
 On pull requests the CI job scopes Opengrep to the changed files and skips OSV-Scanner
 or Trivy when no manifest or infrastructure file changed; the list is derived fail-closed
@@ -114,7 +121,7 @@ The CI job runs on standard GitHub-hosted runners only and refuses billed runner
 ## Commands
 
 ```text
-thyn-sec ci --overlay <name> --mode advisory|ratchet [--changed FILE|ALL] [--measure-baseline]
+thyn-sec ci --overlay <name> --mode advisory|ratchet [--changed FILE|ALL] [--measure-baseline] [--opengrep-upload-audit]
 thyn-sec changed-files [--output FILE]
 thyn-sec install all --rules          # prefetch everything (CI, air-gapped prep)
 thyn-sec run trivy -- image ...       # any pinned tool, verbatim
