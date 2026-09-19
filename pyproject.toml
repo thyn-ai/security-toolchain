@@ -18,7 +18,8 @@ dependencies = []
 thyn-sec = "thyn_security_toolchain.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# pyyaml is test-only: tests/test_propagate_workflow.py parses this repo's own workflow.
+dev = ["pytest>=8", "pyyaml>=6"]
 
 [tool.setuptools]
 packages = ["thyn_security_toolchain"]
