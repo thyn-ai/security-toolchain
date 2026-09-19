@@ -246,8 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-auto-merge", action="store_true")
     ap.add_argument("--no-attribution", dest="attribution", action="store_false")
-    ap.add_argument("--git-user", default="angelatgithub")
-    ap.add_argument("--git-email", default="79715912+angelatgithub@users.noreply.github.com")
+    ap.add_argument("--git-user", default="0xamlab")
+    ap.add_argument("--git-email", default="79715912+0xamlab@users.noreply.github.com")
     args = ap.parse_args(argv)
 
     fleet = json.loads(FLEET.read_text(encoding="utf-8"))
