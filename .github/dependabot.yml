@@ -1,0 +1,50 @@
+# Dependabot configuration.
+#
+# Every entry carries `cooldown: default-days: 7`: a version bump is proposed only once the
+# release is a week old, so a compromised or hastily-yanked upload is caught upstream before it
+# reaches a PR here (Dependabot's own default is 3 days). Security updates are never delayed by
+# cooldown.
+#
+# What Dependabot sees in this repository:
+#   * .github/workflows/*.yml and action.yml -- the SHA-pinned actions: the `github-actions`
+#     entry. The `uses: thyn-ai/security-toolchain@vX.Y.Z` self-reference in the two reusable
+#     workflows is excluded: it is this repository's own release version, kept equal to
+#     `__version__` by tests/test_self_reference.py and bumped by hand in every release commit.
+#   * requirements-dev.txt and requirements-fuzz.txt -- the hash-pinned CI toolchains (pytest,
+#     pyyaml, ruff; atheris): the `pip` entry, which updates the `--hash` lines with the version.
+#     The package itself has no runtime dependencies (pyproject.toml, `dependencies = []`).
+#   * security/toolchain.lock -- the scanner binaries and the opengrep-rules commit: NOT a
+#     Dependabot ecosystem. Those pins move through a reviewed pull request that records the
+#     upstream checksums (README, "Pinning and verification").
+version: 2
+updates:
+  # GitHub Actions: weekly, grouped into one PR -- the same action is pinned by SHA at several
+  # call sites, and one grouped bump is reviewable where a handful of single-action PRs would
+  # not be.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "thyn-ai/security-toolchain*"
+    commit-message:
+      prefix: chore(ci)
+
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dev-tools:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: chore(dev)

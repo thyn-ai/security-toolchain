@@ -1,0 +1,47 @@
+# OpenSSF Scorecard: weekly supply-chain posture check, published to the OpenSSF API (which
+# backs the README badge and https://scorecard.dev/viewer/?uri=github.com/thyn-ai/security-toolchain).
+# Results are NOT uploaded to code scanning: Scorecard's findings (Branch-Protection,
+# Signed-Releases, Pinned-Dependencies, ...) describe repository posture, not code defects, so
+# they belong on scorecard.dev next to the badge rather than in the code-scanning alert list
+# beside the CodeQL and Opengrep results this toolchain itself keeps actionable. Not uploading
+# also keeps the job's token to the one write it needs: no `security-events: write`, which
+# Scorecard's own Token-Permissions check would otherwise deduct for.
+#
+# Hardening: every step is one of two actions -- actions/checkout and ossf/scorecard-action --
+# each pinned to a full-length commit SHA. No secrets are referenced, checkout does not persist
+# credentials, and permissions are least-privilege: the top level is read-only; only the
+# analysis job receives `id-token: write`, for the Sigstore OIDC signature that
+# `publish_results: true` requires. Results only publish from the default branch, so there is
+# no pull_request trigger: `id-token: write` never meets a fork PR's token.
+name: Scorecard
+
+"on":
+  schedule:
+    - cron: "17 6 * * 3"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: OpenSSF Scorecard
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
