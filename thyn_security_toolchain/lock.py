@@ -27,32 +27,56 @@ def load_lock() -> dict[str, Any]:
 
 
 def validate_lock(lock: dict[str, Any]) -> None:
-    """Fail loudly on a malformed lock; this is the trust root for every binary we run."""
+    """Fail loudly on a malformed lock; this is the trust root for every binary we run.
+
+    Every defect -- a missing tool, a stray schema, a field of the wrong JSON type -- raises
+    :class:`LockError`, so a caller has exactly one exception to handle. A lock hand-edited into
+    ``"tools": []`` or ``"sha256": 7`` must be refused with the same clarity as a bad digest,
+    not surface as an ``AttributeError`` from inside the validator.
+    """
+    _mapping("lock", lock)
     if lock.get("schema") != 1:
         raise LockError(f"unsupported lock schema {lock.get('schema')!r}")
-    tools = lock.get("tools") or {}
+    tools = _mapping("lock 'tools'", lock.get("tools") or {})
     for name in TOOLS:
         spec = tools.get(name)
         if not spec:
             raise LockError(f"lock is missing tool {name!r}")
-        if not spec.get("version"):
+        _mapping(f"lock entry {name!r}", spec)
+        version = spec.get("version")
+        if not version:
             raise LockError(f"lock entry {name!r} has no version")
-        assets = spec.get("assets") or {}
+        _text(f"lock entry {name!r} version", version)
+        assets = _mapping(f"lock entry {name!r} 'assets'", spec.get("assets") or {})
         for plat in PLATFORMS:
             asset = assets.get(plat)
             if not asset:
                 raise LockError(f"lock entry {name!r} has no asset for {plat}")
-            _validate_asset(name, plat, asset, spec["version"])
-    rules = lock.get("rules") or {}
+            _validate_asset(name, plat, _mapping(f"{name}/{plat}", asset), version)
+    rules = _mapping("lock 'rules'", lock.get("rules") or {})
     for name, spec in rules.items():
+        _mapping(f"rules entry {name!r}", spec)
         for key in ("commit", "url", "sha256"):
             if not spec.get(key):
                 raise LockError(f"rules entry {name!r} is missing {key!r}")
+            _text(f"rules entry {name!r} {key!r}", spec[key])
         _validate_sha(f"rules {name}", spec["sha256"])
 
 
+def _mapping(what: str, value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise LockError(f"{what} must be a JSON object, got {type(value).__name__}")
+    return value
+
+
+def _text(what: str, value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        raise LockError(f"{what} must be a non-empty string, got {value!r}")
+    return value
+
+
 def _validate_asset(name: str, plat: str, asset: dict[str, Any], version: str) -> None:
-    url = asset.get("url", "")
+    url = _text(f"{name}/{plat}: asset url", asset.get("url", ""))
     if not url.startswith("https://github.com/"):
         raise LockError(f"{name}/{plat}: asset url must be a GitHub release https url, got {url!r}")
     if version not in url:
@@ -65,8 +89,12 @@ def _validate_asset(name: str, plat: str, asset: dict[str, Any], version: str) -
         raise LockError(f"{name}/{plat}: tar.gz asset needs a 'member' to extract")
 
 
-def _validate_sha(what: str, digest: str) -> None:
-    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+def _validate_sha(what: str, digest: Any) -> None:
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(c not in "0123456789abcdef" for c in digest)
+    ):
         raise LockError(f"{what}: sha256 must be 64 lowercase hex chars, got {digest!r}")
 
 

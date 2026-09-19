@@ -19,11 +19,12 @@ finding do not churn the baseline:
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -43,6 +44,12 @@ class Finding:
     message: str
     rule: str
     extra: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # A key is matched against baseline lines, which read_baseline reads with rstrip. A
+        # key that ended in whitespace -- a result with no snippet, an empty advisory id --
+        # could therefore never match its own baseline entry and stayed "new" forever.
+        self.key = self.key.strip()
 
     @property
     def blocking(self) -> bool:
@@ -80,8 +87,14 @@ class GateResult:
 
 
 def _norm_ws(text: str, limit: int = 100) -> str:
+    """Collapse whitespace, trim, and cut at *limit* -- idempotently.
+
+    The cut is trimmed again: truncating ``"... foo bar"`` one character past ``foo`` leaves a
+    trailing space, and a key ending in a space would never match its own baseline line,
+    which :func:`read_baseline` reads with ``rstrip``.
+    """
     text = re.sub(r"\s+", " ", text or "").strip()
-    return text[:limit]
+    return text[:limit].rstrip()
 
 
 def _severity_from_score(score: float | None) -> str:
@@ -96,6 +109,28 @@ def _severity_from_score(score: float | None) -> str:
     if score >= 4.0:
         return "MEDIUM"
     return "LOW"
+
+
+def _line(value: object) -> int | None:
+    """A report's line number as an ``int``, or ``None`` when the field is absent or not one.
+
+    Every scanner writes an integer; a report that carries ``"3"`` or ``null`` still parses,
+    the finding just has no line. ``bool`` is excluded (it is an ``int`` to Python).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _identifier(value: object, what: str) -> str:
+    """A rule or check id, which every scanner writes as a string; anything else is malformed."""
+    if not isinstance(value, str):
+        raise TypeError(f"{what} must be a string, got {type(value).__name__}")
+    return value
 
 
 def _rel(uri: str, root: Path | None) -> str:
@@ -120,6 +155,38 @@ def _rel(uri: str, root: Path | None) -> str:
 
 # --------------------------------------------------------------------------- parsers
 
+
+class ReportError(ValueError):
+    """A scanner report that does not have the shape its tool documents.
+
+    Every parser in :data:`PARSERS` and both SARIF rewriters raise this, in place of the
+    ``AttributeError`` / ``TypeError`` / ``KeyError`` that a wrongly typed field (``"runs": [1]``,
+    a ``message`` that is a string, a ``ruleId`` that is a number) would otherwise surface from
+    inside the parser, and in place of the ``RecursionError`` that JSON nested deeper than the
+    interpreter's stack raises. It subclasses :class:`ValueError` so unparsable JSON
+    (:class:`json.JSONDecodeError`), a non-UTF-8 file and a well-formed document with the wrong
+    structure all fail the same way, and the message names the tool and the file.
+    """
+
+
+def _report_shape(tool: str) -> Callable:
+    """Decorate a report reader so a malformed *tool* report raises :class:`ReportError`."""
+
+    def decorate(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def read(path: Path, *args, **kwargs):
+            try:
+                return fn(path, *args, **kwargs)
+            except (AttributeError, TypeError, KeyError, RecursionError) as exc:
+                raise ReportError(
+                    f"malformed {tool} report {path}: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        return read
+
+    return decorate
+
+
 _OPENGREP_PREFIX = re.compile(r"^.*?opengrep-rules-[0-9a-f]{12}\.")
 
 
@@ -142,6 +209,7 @@ def _is_low_confidence_rule(rule_id: str, meta: dict) -> bool:
     return bool(_AUDIT_RULE_ID.search(normalize_opengrep_rule_id(rule_id)))
 
 
+@_report_shape("opengrep")
 def demote_low_confidence_levels(path: Path) -> int:
     """Rewrite an Opengrep SARIF in place so low-confidence / audit rules carry level ``warning``.
 
@@ -180,6 +248,7 @@ def demote_low_confidence_levels(path: Path) -> int:
     return demoted
 
 
+@_report_shape("opengrep")
 def drop_audit_results(path: Path) -> int:
     """Rewrite an Opengrep SARIF in place without its low-confidence / audit results.
 
@@ -221,6 +290,7 @@ def drop_audit_results(path: Path) -> int:
     return dropped
 
 
+@_report_shape("opengrep")
 def parse_opengrep_sarif(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: list[Finding] = []
@@ -251,7 +321,7 @@ def parse_opengrep_sarif(path: Path, root: Path | None = None) -> list[Finding]:
                     key=f"{rule} :: {uri} :: {snippet}",
                     severity=severity,
                     path=uri,
-                    line=region.get("startLine"),
+                    line=_line(region.get("startLine")),
                     message=_norm_ws(res.get("message", {}).get("text", ""), 300),
                     rule=rule,
                 )
@@ -259,6 +329,7 @@ def parse_opengrep_sarif(path: Path, root: Path | None = None) -> list[Finding]:
     return out
 
 
+@_report_shape("trivy")
 def parse_trivy_sarif(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: list[Finding] = []
@@ -267,7 +338,7 @@ def parse_trivy_sarif(path: Path, root: Path | None = None) -> list[Finding]:
             r.get("id"): r for r in (run.get("tool", {}).get("driver", {}) or {}).get("rules", [])
         }
         for res in run.get("results", []):
-            rule_id = res.get("ruleId", "")
+            rule_id = _identifier(res.get("ruleId", ""), "trivy ruleId")
             rule = rules.get(rule_id, {})
             score_text = (rule.get("properties") or {}).get("security-severity")
             try:
@@ -285,7 +356,7 @@ def parse_trivy_sarif(path: Path, root: Path | None = None) -> list[Finding]:
                     key=f"{rule_id} :: {uri}",
                     severity=severity,
                     path=uri,
-                    line=region.get("startLine"),
+                    line=_line(region.get("startLine")),
                     message=_norm_ws(title or res.get("message", {}).get("text", ""), 300),
                     rule=rule_id,
                 )
@@ -302,6 +373,7 @@ def parse_trivy_sarif(path: Path, root: Path | None = None) -> list[Finding]:
 
 
 def _pick_advisory_id(ids: Sequence[str]) -> str:
+    ids = [i.strip() for i in ids if isinstance(i, str) and i.strip()]
     ghsa = sorted(i for i in ids if i.startswith("GHSA-"))
     if ghsa:
         return ghsa[0]
@@ -311,6 +383,7 @@ def _pick_advisory_id(ids: Sequence[str]) -> str:
     return sorted(ids)[0] if ids else "UNKNOWN"
 
 
+@_report_shape("osv-scanner")
 def parse_osv_json(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(path.read_text(encoding="utf-8"))
     out: list[Finding] = []
@@ -351,6 +424,7 @@ def parse_osv_json(path: Path, root: Path | None = None) -> list[Finding]:
     return out
 
 
+@_report_shape("gitleaks")
 def parse_gitleaks_json(path: Path, root: Path | None = None) -> list[Finding]:
     text = path.read_text(encoding="utf-8").strip()
     if not text:
@@ -358,9 +432,11 @@ def parse_gitleaks_json(path: Path, root: Path | None = None) -> list[Finding]:
     data = json.loads(text)
     out: list[Finding] = []
     for item in data or []:
+        rule_id = _identifier(item.get("RuleID", ""), "gitleaks RuleID")
         file_ = _rel(item.get("File", ""), root)
-        fingerprint = (
-            item.get("Fingerprint") or f"{file_}:{item.get('RuleID')}:{item.get('StartLine')}"
+        # gitleaks' own fingerprint when it has one; a blank one falls back to the same shape.
+        fingerprint = (item.get("Fingerprint") or "").strip() or (
+            f"{file_}:{rule_id}:{item.get('StartLine')}"
         )
         out.append(
             Finding(
@@ -368,11 +444,11 @@ def parse_gitleaks_json(path: Path, root: Path | None = None) -> list[Finding]:
                 key=fingerprint,
                 severity="CRITICAL",
                 path=file_,
-                line=item.get("StartLine"),
+                line=_line(item.get("StartLine")),
                 message=_norm_ws(
-                    f"{item.get('RuleID')}: {item.get('Description', '')} (secret redacted)", 300
+                    f"{rule_id}: {item.get('Description', '')} (secret redacted)", 300
                 ),
-                rule=item.get("RuleID", ""),
+                rule=rule_id,
             )
         )
     return out

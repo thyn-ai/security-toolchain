@@ -106,8 +106,31 @@ def overlay_names() -> list[str]:
     return sorted(load_overlays())
 
 
+def _overlay_field(overlays: dict, name: str, field: str) -> list[str]:
+    """One list-of-strings field of an overlay spec, or a :class:`ScanError` naming the defect.
+
+    A spec that is not an object, or a field that is a bare string, would otherwise be
+    iterated character by character (``"packs": "python/lang"`` resolving to the packs
+    ``p``, ``y``, ``t``, ...) and reach Opengrep as nonsense ``--config`` paths.
+    """
+    spec = overlays[name]
+    if not isinstance(spec, dict):
+        raise ScanError(
+            f"opengrep overlay {name!r} must be a JSON object, got {type(spec).__name__}"
+        )
+    value = spec.get(field) or []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ScanError(f"opengrep overlay {name!r}: {field!r} must be a list of strings")
+    return value
+
+
 def resolve_overlay(name: str) -> tuple[list[str], list[str]]:
-    """Return ``(packs, exclude_rules)`` for *name*, following ``extends`` transitively."""
+    """Return ``(packs, exclude_rules)`` for *name*, following ``extends`` transitively.
+
+    Parents contribute before the overlay's own entries, each pack and rule appears once, and
+    an ``extends`` cycle terminates. Every malformed spec -- an unknown overlay, an unknown
+    parent, a field of the wrong type -- raises :class:`ScanError`.
+    """
     overlays = load_overlays()
     if name not in overlays:
         raise ScanError(f"unknown opengrep overlay {name!r}; known: {', '.join(overlay_names())}")
@@ -119,15 +142,19 @@ def resolve_overlay(name: str) -> tuple[list[str], list[str]]:
         if n in seen:
             return
         seen.add(n)
-        spec = overlays[n]
-        for parent in spec.get("extends", []) or []:
-            visit(str(parent))
-        for p in spec.get("packs", []) or []:
+        for parent in _overlay_field(overlays, n, "extends"):
+            if parent not in overlays:
+                raise ScanError(
+                    f"opengrep overlay {n!r} extends unknown overlay {parent!r}; "
+                    f"known: {', '.join(overlay_names())}"
+                )
+            visit(parent)
+        for p in _overlay_field(overlays, n, "packs"):
             if p not in packs:
-                packs.append(str(p))
-        for r in spec.get("exclude_rules", []) or []:
+                packs.append(p)
+        for r in _overlay_field(overlays, n, "exclude_rules"):
             if r not in excludes:
-                excludes.append(str(r))
+                excludes.append(r)
 
     visit(name)
     return packs, excludes
