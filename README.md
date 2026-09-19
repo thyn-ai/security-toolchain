@@ -25,7 +25,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.10
+    rev: v0.1.11
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -45,7 +45,7 @@ repos:
 # .github/workflows/security.yml
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.10
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.11
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
@@ -93,6 +93,25 @@ The same gate runs everywhere: `thyn-sec ci` on CI, one tool at a time in the ho
   `thyn-sec-reports` artifact, but they are **left out of the SARIF uploaded to code
   scanning** so the alert list stays actionable. A repository that wants them as
   code-scanning warnings sets `opengrep_upload_audit: true` on `security-full.yml`.
+* **Test code is out of Opengrep's scope**: `**/tests/**`, `**/test/**`, `**/__tests__/**`,
+  `test_*.py`, `*_test.py`, `conftest.py`, `*.test.ts|tsx|js`, `*.spec.ts|tsx|js`,
+  `**/testdata/**`, `**/fixtures/**`. What SAST finds there is the fixture, not a defect: a
+  hard-coded JWT secret that mints test tokens, `jwt.decode` without verification on a token
+  the test itself just signed, XML parsing of a checked-in sample, `subprocess` in a test
+  harness. The scanner applies the exclusion itself (`--exclude` + `--force-exclude`), so it
+  holds for the pre-commit hooks, the PR-scoped CI scan and the full scan alike, and the
+  results never exist -- not in the gate, not in the code-scanning upload. Opengrep's default
+  `.semgrepignore` already skips `tests/` and `test/`, but a repository's own `.semgrepignore`
+  replaces that default and files named on the command line bypass it without
+  `--force-exclude`; this policy holds either way. `benchmarks/`, `scripts/` and every other
+  non-test path stay in scope. A repository that wants its tests scanned sets
+  `opengrep_scan_tests: true` on `security-full.yml` (`thyn-sec ci --opengrep-scan-tests`;
+  `--scan-tests` on the `opengrep-changed` / `opengrep-full` hooks). That lifts this
+  toolchain's exclusion only: Opengrep's built-in `.semgrepignore` still skips `tests/` and
+  `test/` -- on a full scan and, because `--force-exclude` applies it to files named on the
+  command line too, on the PR-scoped CI scan and the `opengrep-changed` hook alike -- until
+  the repository commits a `.semgrepignore` of its own (an empty one is enough); the gate
+  summary says so when it applies.
 
 On pull requests the CI job scopes Opengrep to the changed files and skips OSV-Scanner
 or Trivy when no manifest or infrastructure file changed; the list is derived fail-closed
@@ -121,7 +140,7 @@ The CI job runs on standard GitHub-hosted runners only and refuses billed runner
 ## Commands
 
 ```text
-thyn-sec ci --overlay <name> --mode advisory|ratchet [--changed FILE|ALL] [--measure-baseline] [--opengrep-upload-audit]
+thyn-sec ci --overlay <name> --mode advisory|ratchet [--changed FILE|ALL] [--measure-baseline] [--opengrep-upload-audit] [--opengrep-scan-tests]
 thyn-sec changed-files [--output FILE]
 thyn-sec install all --rules          # prefetch everything (CI, air-gapped prep)
 thyn-sec run trivy -- image ...       # any pinned tool, verbatim

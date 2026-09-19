@@ -75,6 +75,23 @@ def code_scanning_sarif(report: Path, notes: list[str]) -> Path:
     return upload
 
 
+def test_path_note(scan_tests: bool, root: Path) -> str:
+    """One summary line saying whether test code was in Opengrep's scope for this run."""
+    if scan_tests:
+        note = "opengrep: test paths scanned (opengrep_scan_tests: true)"
+        if not (root / ".semgrepignore").is_file():
+            note += (
+                "; Opengrep's built-in .semgrepignore still skips tests/ and test/ (on full "
+                "scans and, because --force-exclude applies it to named files too, on "
+                "PR-scoped runs) -- commit a .semgrepignore (even an empty one) to lift that too"
+            )
+        return note
+    return (
+        f"opengrep: test paths out of scope by policy ({hooks.describe_test_paths()}); "
+        "opengrep_scan_tests: true scans them"
+    )
+
+
 def gate_findings(tool: str, root: Path, findings: Sequence[Finding], mode: str) -> GateResult:
     if tool == "gitleaks":
         # Secrets are zero-tolerance: no baseline file, ever. Allowlisting happens in
@@ -94,6 +111,7 @@ def run_ci(
     tools: Sequence[str] = TOOL_ORDER,
     measure_baseline: bool = False,
     upload_audit: bool = False,
+    scan_tests: bool = False,
 ) -> int:
     if mode not in ("advisory", "ratchet"):
         raise SystemExit(f"--mode must be advisory or ratchet, got {mode!r}")
@@ -122,9 +140,10 @@ def run_ci(
             notes.append("opengrep: no scannable changed files in this diff; skipped")
         else:
             report = out_dir / "opengrep.sarif"
-            findings = hooks.opengrep(root, overlay, targets, report)
+            findings = hooks.opengrep(root, overlay, targets, report, scan_tests=scan_tests)
             all_findings["opengrep"] = findings
             results.append(gate_findings("opengrep", root, findings, mode))
+            notes.append(test_path_note(scan_tests, root))
             if report.is_file():
                 upload = report if upload_audit else code_scanning_sarif(report, notes)
                 outputs["opengrep_sarif"] = str(upload)

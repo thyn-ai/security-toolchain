@@ -7,12 +7,13 @@ Needs network on first run (binaries, rules bundle, trivy checks, OSV API). Run 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from thyn_security_toolchain import changed
-from thyn_security_toolchain.ci import run_ci
+from thyn_security_toolchain.ci import CODE_SCANNING_SARIF, run_ci
 from thyn_security_toolchain.gate import (
     parse_gitleaks_json,
     parse_opengrep_sarif,
@@ -113,3 +114,68 @@ def test_clean_fixture_is_clean(fixture_repo: Path, tmp_path: Path):
     assert run_ci(fixture_repo, OVERLAY, "ratchet", ["clean/app.py"], out, tools=("opengrep",)) == 0
     sarif = json.loads((out / "opengrep.sarif").read_text())
     assert sarif["runs"][0]["results"] == []
+
+
+def test_test_paths_are_out_of_scope_unless_opted_in(fixture_repo: Path, tmp_path: Path):
+    """The opengrep fixture, copied under every test-path shape, produces no result -- for a
+    full scan and for the files named explicitly (pre-commit, PR scope) alike -- while the
+    original copy still fires, proving the scan ran. Opting in lifts this toolchain's
+    exclusion; Opengrep's own default .semgrepignore still skips tests/ and test/ until the
+    repository has a .semgrepignore of its own, and the policy holds with one present too
+    (the thyn-ai/algenta shape: its own .semgrepignore, tests/ alerts everywhere)."""
+    control = "opengrep/shell_injection.py"
+    copies = (
+        "tests/test_shell.py",
+        "pkg/test/shell.py",
+        "web/__tests__/shell.py",
+        "pkg/shell_test.py",
+        "pkg/conftest.py",
+        "pkg/testdata/shell.py",
+        "pkg/fixtures/shell.py",
+    )
+    for rel in copies:
+        dst = fixture_repo / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(fixture_repo / control, dst)
+
+    def paths(out: Path, name: str = "opengrep.sarif") -> set[str]:
+        return {f.path for f in parse_opengrep_sarif(out / name, fixture_repo)}
+
+    full = tmp_path / "full"
+    assert run_ci(fixture_repo, OVERLAY, "advisory", changed.ALL, full, tools=("opengrep",)) == 0
+    assert paths(full) == {control}
+    assert paths(full, CODE_SCANNING_SARIF) == {control}, "never existed, so nothing to drop"
+    assert "test paths out of scope by policy" in (full / "summary.md").read_text()
+
+    explicit = tmp_path / "explicit"
+    run_ci(
+        fixture_repo,
+        OVERLAY,
+        "advisory",
+        [control, *copies],
+        explicit,
+        tools=("opengrep",),
+    )
+    assert paths(explicit) == {control}, "--force-exclude: named files obey the same policy"
+
+    scanner_default = {"tests/test_shell.py", "pkg/test/shell.py"}
+    opted = tmp_path / "opted"
+    run_ci(
+        fixture_repo, OVERLAY, "advisory", changed.ALL, opted, tools=("opengrep",), scan_tests=True
+    )
+    assert paths(opted) == {control, *copies} - scanner_default
+    summary = (opted / "summary.md").read_text()
+    assert "test paths scanned (opengrep_scan_tests: true)" in summary
+    assert "built-in .semgrepignore still skips tests/ and test/" in summary
+
+    (fixture_repo / ".semgrepignore").write_text("")  # replaces Opengrep's built-in default
+    own = tmp_path / "own"
+    run_ci(
+        fixture_repo, OVERLAY, "advisory", changed.ALL, own, tools=("opengrep",), scan_tests=True
+    )
+    assert paths(own) == {control, *copies}
+    assert "built-in .semgrepignore" not in (own / "summary.md").read_text()
+
+    policy = tmp_path / "policy"
+    run_ci(fixture_repo, OVERLAY, "advisory", changed.ALL, policy, tools=("opengrep",))
+    assert paths(policy) == {control}, "the policy holds on top of a repository's .semgrepignore"

@@ -47,6 +47,10 @@ on:
         description: "Also upload Opengrep audit / low-confidence results (LOW CONFIDENCE tag, *.audit.* or *-audit ids) to code scanning as warnings. Default: they stay in the console summary and the reports artifact only."
         type: boolean
         default: false
+      opengrep_scan_tests:
+        description: "Also run Opengrep over test code: **/tests/**, **/test/**, **/__tests__/**, test_*.py, *_test.py, conftest.py, *.test.ts|tsx|js, *.spec.ts|tsx|js, **/testdata/**, **/fixtures/**. Default: test paths are out of scope for the gate and for code scanning alike -- what SAST finds there is the fixture (a hard-coded test JWT secret, decode-without-verify on a token the test signed), not a defect. true lifts this toolchain's exclusion only; Opengrep's built-in .semgrepignore still skips tests/ and test/ (on full scans and, because --force-exclude applies it to named files too, on PR-scoped runs) unless the repository has a .semgrepignore of its own (an empty one is enough)."
+        type: boolean
+        default: false
       python_version:
         type: string
         default: "3.12"
@@ -83,7 +87,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.10 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
+        uses: thyn-ai/security-toolchain@v0.1.11 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
         with:
           python-version: ${{ inputs.python_version }}
 
@@ -105,12 +109,14 @@ jobs:
           TOOLS: ${{ inputs.tools }}
           MEASURE: ${{ inputs.measure_baseline }}
           UPLOAD_AUDIT: ${{ inputs.opengrep_upload_audit }}
+          SCAN_TESTS: ${{ inputs.opengrep_scan_tests }}
         run: |
           set -o pipefail
           args=(ci --overlay "$OVERLAY" --mode "$MODE" --tools "$TOOLS"
                 --changed "$RUNNER_TEMP/thyn-sec/changed.txt" --out-dir "$RUNNER_TEMP/thyn-sec/out")
           if [ "$MEASURE" = "true" ]; then args+=(--measure-baseline); fi
           if [ "$UPLOAD_AUDIT" = "true" ]; then args+=(--opengrep-upload-audit); fi
+          if [ "$SCAN_TESTS" = "true" ]; then args+=(--opengrep-scan-tests); fi
           thyn-sec "${args[@]}"
 
       - name: Upload Opengrep SARIF

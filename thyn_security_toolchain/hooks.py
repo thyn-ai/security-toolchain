@@ -27,6 +27,39 @@ OPENGREP_TIMEOUT_SECONDS = "10"
 OPENGREP_TIMEOUT_THRESHOLD = "3"
 OPENGREP_MAX_TARGET_BYTES = "1000000"
 
+# Test code is out of Opengrep's scope by default. What SAST finds there is the fixture, not
+# a defect: a hard-coded JWT secret that mints test tokens, jwt.decode(verify=False) on a
+# token the test itself just signed, XML parsing of a checked-in sample, subprocess in a test
+# harness -- 18 of thyn-ai/algenta's 42 open Opengrep alerts sat under tests/. Opengrep's own
+# default .semgrepignore skips tests/ and test/, but a repository that ships its own
+# .semgrepignore replaces that default, and files named on the command line (the
+# opengrep-changed hook, a PR-scoped CI scan) bypass it -- hence --force-exclude below.
+# gitignore syntax, which is what --exclude takes and what the probe on opengrep 1.30.0
+# confirmed: src/testing.py, src/tests_helper.py, pkg/test_utils/x.py, src/latest.py stay in;
+# benchmarks/ and scripts/ are real code and stay in. Matched relative to the project root, so
+# a clone that itself lives under a directory named tests/ or fixtures/ is unaffected.
+# The opt-in (scan_tests) lifts exactly this list; Opengrep's built-in default .semgrepignore
+# still skips tests/ and test/ -- on a directory walk and, because --force-exclude applies it
+# to files named on the command line too, on the opengrep-changed hook and a PR-scoped CI
+# scan alike -- until the repository commits a .semgrepignore of its own (an empty one is
+# enough; both shapes probed on 1.30.0).
+OPENGREP_TEST_PATH_GLOBS = (
+    "**/tests/**",
+    "**/test/**",
+    "**/__tests__/**",
+    "**/test_*.py",
+    "**/*_test.py",
+    "**/conftest.py",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.test.js",
+    "**/*.spec.js",
+    "**/testdata/**",
+    "**/fixtures/**",
+)
+
 
 class ScanError(RuntimeError):
     pass
@@ -162,8 +195,39 @@ def gitleaks(root: Path, scope: str, report: Path, log_opts: str | None = None) 
 # ----------------------------------------------------------------------------- opengrep
 
 
-def opengrep(root: Path, overlay: str, targets: list[str] | None, report: Path) -> list[Finding]:
-    """Run Opengrep over *targets* (``None`` = whole repo) and parse the SARIF."""
+def opengrep_excludes(scan_tests: bool = False) -> list[str]:
+    """Every ``--exclude`` pattern an Opengrep run gets.
+
+    The org-wide skip directories always; the test-path globs unless the caller opted into
+    scanning tests (``opengrep_scan_tests: true`` / ``--opengrep-scan-tests`` / ``--scan-tests``).
+    """
+    patterns = list(DEFAULT_SKIP_DIRS)
+    if not scan_tests:
+        patterns.extend(OPENGREP_TEST_PATH_GLOBS)
+    return patterns
+
+
+def describe_test_paths() -> str:
+    """The test-path policy as one line for summaries, derived from the globs themselves."""
+    return ", ".join(g[len("**/") :] for g in OPENGREP_TEST_PATH_GLOBS)
+
+
+def opengrep(
+    root: Path,
+    overlay: str,
+    targets: list[str] | None,
+    report: Path,
+    scan_tests: bool = False,
+) -> list[Finding]:
+    """Run Opengrep over *targets* (``None`` = whole repo) and parse the SARIF.
+
+    Test paths (:data:`OPENGREP_TEST_PATH_GLOBS`) are excluded unless *scan_tests*. The
+    exclusion is applied by the scanner itself, so the results never exist -- not for the
+    gate, not for the code-scanning upload -- and ``--force-exclude`` makes it hold for files
+    named explicitly (pre-commit, PR scope) exactly as for a directory walk. The same flag
+    makes :data:`~thyn_security_toolchain.repo.DEFAULT_SKIP_DIRS` apply to explicit targets
+    too, which is what a full scan already did.
+    """
     if targets is not None and not targets:
         return []
     exe = tool_path("opengrep")
@@ -185,8 +249,11 @@ def opengrep(root: Path, overlay: str, targets: list[str] | None, report: Path) 
         "--sarif-output",
         str(report),
     ]
-    for d in DEFAULT_SKIP_DIRS:
-        cmd += ["--exclude", d]
+    for pattern in opengrep_excludes(scan_tests):
+        cmd += ["--exclude", pattern]
+    # By default Opengrep applies --exclude only to files it discovers itself; a file passed on
+    # the command line would slip past every pattern above (opengrep 1.30.0, verified).
+    cmd.append("--force-exclude")
     for c in configs:
         cmd += ["--config", str(c)]
     for r in exclude_rules:
