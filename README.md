@@ -164,6 +164,15 @@ no `workflows` permission), so the job reads one of two credentials. With neithe
 posts a `::notice` and exits 0 -- which is what every run through v0.1.10 did, because the
 secret never existed; each of those releases was fanned out from a laptop instead.
 
+The secrets are read in exactly two places: the `creds` step tests their presence in the
+expression layer (`${{ secrets.NAME != '' }}`, so booleans reach its shell and no secret value
+does), then the App id and key go only to the token-mint action and `TOOLCHAIN_PROPAGATE_TOKEN`
+enters the Propagate step's environment only when it is the credential in use. On the `release`
+trigger the job also refuses to fan out unless the tagged commit is reachable from `main` (the
+compare API reports `identical` or `behind`) and its `__version__` equals the tag, because
+`release: published` fires for a tag on any commit and an unreviewed one would otherwise reach
+every fleet repository with the org token.
+
 **GitHub App (preferred).** Two repository secrets, named exactly as in
 `algenta-integrations` so the owner sets them the same way:
 

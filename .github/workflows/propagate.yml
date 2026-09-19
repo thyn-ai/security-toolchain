@@ -2,8 +2,11 @@
 # touches only the marker-delimited pre-commit block and the caller workflow pin.
 #
 # Credentials, in order of preference. The `secrets` context is not visible to job- or
-# step-level `if:`, so one step reads them into env and exports a `mode` output that every
-# later step gates on:
+# step-level `if:`, but it is visible to step `env:` expressions, so the `creds` step tests
+# presence there (`${{ secrets.X != '' }}`): two booleans reach its shell, no secret value
+# does, and it exports a `mode` output that every later step gates on. Secret values then
+# reach exactly two consumers -- the App id + key go to the token-mint action (mode app), and
+# the PAT is placed in the Propagate step's env only when the mode is pat:
 #
 #   app   ALGENTA_SDK_SYNC_APP_ID + ALGENTA_SDK_SYNC_APP_PRIVATE_KEY -- the org's release App,
 #         under the same secret names algenta-integrations/auto-release.yml uses. A short-lived
@@ -18,6 +21,12 @@
 # The default GITHUB_TOKEN cannot do this job: enterprise policy forbids Actions from creating
 # pull requests with it, and a token without `workflows` cannot push the
 # .github/workflows/security.yml pin bump at all. README: "Running propagate from GitHub Actions".
+#
+# `release: published` fires for a tag on ANY commit, so before anything from the checkout is
+# executed the job asks the compare API (default token; the checkout is shallow) whether the
+# tagged commit is reachable from main, and refuses otherwise -- a tag on an unreviewed commit
+# would otherwise fan that commit's scripts/propagate.py out to every fleet repository with
+# the org token. The tag must also equal the commit's __version__.
 name: propagate
 
 on:
@@ -53,17 +62,36 @@ jobs:
           python-version: "3.12"
 
       - name: Refuse to fan out a release whose __version__ doesn't match its own tag
-        # A published release is always tagged from the commit checked out here, so this
-        # commit's __version__ must equal the tag being published. It caught nothing until
-        # v0.1.2 shipped with __version__ still reading "0.1.1" -- every caller pinned to
-        # that tag would have had verify-toolchain fail forever, for a reason invisible in
-        # the diff. Only applies to the release trigger: a workflow_dispatch re-propagating
-        # an older --tag is checking out today's main, not that tag's commit.
+        # Two refusals, both release-trigger only (a workflow_dispatch re-propagating an
+        # older --tag is checking out today's main, not that tag's commit).
+        #
+        # 1. The tagged commit must be reachable from main. `release: published` fires for a
+        #    tag on ANY commit, and this job goes on to execute that commit's
+        #    scripts/propagate.py against every fleet repository with the org token -- so a
+        #    tag on an unreviewed commit would fan unreviewed code out fleet-wide. The
+        #    checkout is shallow, so local ancestry is unavailable; the compare API answers
+        #    instead. `identical` and `behind` both mean GITHUB_SHA is an ancestor of main;
+        #    `ahead` and `diverged` mean it is not. This runs before the __version__ import
+        #    below, which is the first thing here that executes code from the checkout.
+        # 2. This commit's __version__ must equal the tag being published. It caught nothing
+        #    until v0.1.2 shipped with __version__ still reading "0.1.1" -- every caller
+        #    pinned to that tag would have had verify-toolchain fail forever, for a reason
+        #    invisible in the diff.
         if: ${{ github.event_name == 'release' }}
         env:
           TAG: ${{ github.event.release.tag_name }}
+          # the read-only default token; the compare endpoint needs nothing more
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          compare_status="$(gh api "repos/${GITHUB_REPOSITORY}/compare/main...${GITHUB_SHA}" --jq .status)"
+          case "$compare_status" in
+            identical|behind) ;;
+            *)
+              echo "::error title=propagate::release $TAG is tagged on $GITHUB_SHA, which is not on main (compare status: $compare_status) -- releases must be cut from a commit already merged to main"
+              exit 1
+              ;;
+          esac
           installed="v$(python -c 'from thyn_security_toolchain import __version__; print(__version__)')"
           if [ "$installed" != "$TAG" ]; then
             echo "::error title=propagate::release $TAG published but thyn_security_toolchain.__version__ is $installed -- fix and re-release before fan-out runs"
@@ -72,15 +100,17 @@ jobs:
 
       - name: Decide which credentials this run has
         id: creds
+        # Presence is tested in the expression layer, where the `secrets` context IS
+        # available (it is only `if:` that cannot see it). Two booleans reach this shell;
+        # the secret values themselves never enter the process.
         env:
-          APP_ID: ${{ secrets.ALGENTA_SDK_SYNC_APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY }}
-          PAT: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
+          HAS_APP: ${{ secrets.ALGENTA_SDK_SYNC_APP_ID != '' && secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY != '' }}
+          HAS_PAT: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN != '' }}
         run: |
           set -euo pipefail
-          if [ -n "${APP_ID:-}" ] && [ -n "${APP_PRIVATE_KEY:-}" ]; then
+          if [ "$HAS_APP" = "true" ]; then
             mode=app
-          elif [ -n "${PAT:-}" ]; then
+          elif [ "$HAS_PAT" = "true" ]; then
             mode=pat
           else
             mode=none
@@ -132,12 +162,15 @@ jobs:
           permission-metadata: read
 
       - name: Propagate
-        if: steps.creds.outputs.mode != 'none'
+        # An allow-list of the two credentialed modes, not `!= 'none'`: an empty or
+        # unexpected mode must never run the fan-out.
+        if: steps.creds.outputs.mode == 'app' || steps.creds.outputs.mode == 'pat'
         env:
           MODE: ${{ steps.creds.outputs.mode }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          PAT: ${{ secrets.TOOLCHAIN_PROPAGATE_TOKEN }}
+          # the PAT enters this process only when it is the credential in use
+          PAT: ${{ steps.creds.outputs.mode == 'pat' && secrets.TOOLCHAIN_PROPAGATE_TOKEN || '' }}
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           REPOS: ${{ inputs.repos }}
           DRY_RUN: ${{ inputs.dry_run }}
