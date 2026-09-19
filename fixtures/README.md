@@ -12,6 +12,6 @@ toolchain's own gate stays clean without a single allowlist entry.
 |-------------|--------------|----------------------------------------------------------------|
 | `gitleaks/` | gitleaks     | an AWS access key id (assembled at test time)                  |
 | `opengrep/` | opengrep     | `subprocess.call(..., shell=True)` fed user input              |
-| `osv/`      | osv-scanner  | `requests==2.19.0` in a requirements.txt                       |
+| `osv/`      | osv-scanner  | `requests==2.19.0` in a requirements.txt; `lodash` 4.17.15 in an npm `package-lock.json` (no `package.json`, no integrity hashes: the lockfile alone is read, under any overlay) |
 | `trivy/`    | trivy config | a root-user Dockerfile and a public-read S3 bucket in Terraform |
 | `clean/`    | none         | ordinary code that must produce zero findings                  |

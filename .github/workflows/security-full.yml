@@ -24,7 +24,7 @@ on:
   workflow_call:
     inputs:
       overlay:
-        description: "Opengrep overlay: python-uv | site | pnpm-monorepo | engine | codna | smoke"
+        description: "Opengrep rule-pack overlay: python-uv | site | python-javascript | engine | codna | smoke (pnpm-monorepo = alias of python-javascript). Selects Opengrep packs only; osv-scanner, trivy config and gitleaks scan the whole tree whatever the overlay."
         type: string
         default: python-uv
       mode:
@@ -87,7 +87,7 @@ jobs:
 
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.11 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
+        uses: thyn-ai/security-toolchain@v0.1.12 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
         with:
           python-version: ${{ inputs.python_version }}
 

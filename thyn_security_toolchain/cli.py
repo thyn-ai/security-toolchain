@@ -122,7 +122,7 @@ def cmd_security_fix_deps(args: argparse.Namespace) -> int:
         "exposed on purpose as a manual step, never as an automatic hook. Review the diff\n"
         "it produces like any other.\n\n"
         f"  {exe} fix --non-interactive --strategy in-place -L <lockfile>\n"
-        "      # e.g. uv.lock, pnpm-lock.yaml\n"
+        "      # e.g. uv.lock, package-lock.json, pnpm-lock.yaml\n"
         f"  {exe} fix --non-interactive --strategy relock  -M <manifest> -L <lockfile>\n\n"
         f"(run from {root})",
         file=sys.stderr,

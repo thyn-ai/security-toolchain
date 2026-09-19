@@ -5,6 +5,7 @@ Counts are derived from the files themselves, never hard-coded.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from thyn_security_toolchain.cli import build_parser
 
 REPO = Path(__file__).resolve().parents[1]
 HOOKS_YAML = REPO / ".pre-commit-hooks.yaml"
+FLEET = REPO / "fleet.json"
+SECURITY_FULL = REPO / ".github" / "workflows" / "security-full.yml"
 
 _ID_RE = re.compile(r"^- id: ([\w-]+)$", re.M)
 _ENTRY_RE = re.compile(r"^  entry: thyn-sec ([\w-]+)$", re.M)
@@ -80,3 +83,29 @@ def test_caller_templates_pin_by_sha_with_tag_comment():
         )
         assert re.search(pattern, text), name
         assert "permissions:" in text
+
+
+def test_pnpm_monorepo_is_an_alias_of_python_javascript():
+    """The pre-0.1.12 name stays resolvable for callers already propagated with it and can
+    never drift from the pack set it names. thyn-ai/mojo-kernels#9 read the old name as a
+    lockfile selector; it never was one (tests/test_osv_scope.py pins that seam)."""
+    assert hooks.resolve_overlay("pnpm-monorepo") == hooks.resolve_overlay("python-javascript")
+    spec = hooks.load_overlays()["pnpm-monorepo"]
+    assert spec.get("extends") == ["python-javascript"]
+    assert not spec.get("packs") and not spec.get("exclude_rules")
+
+
+def test_every_fleet_overlay_resolves():
+    fleet = json.loads(FLEET.read_text(encoding="utf-8"))
+    known = set(hooks.overlay_names())
+    for repo, cfg in fleet["repos"].items():
+        assert cfg["overlay"] in known, f"fleet.json: {repo} -> unknown overlay {cfg['overlay']!r}"
+
+
+def test_security_full_overlay_description_names_every_fleet_overlay():
+    fleet = json.loads(FLEET.read_text(encoding="utf-8"))
+    used = {cfg["overlay"] for cfg in fleet["repos"].values()}
+    m = re.search(r'overlay:\n\s+description: "([^"]+)"', SECURITY_FULL.read_text(encoding="utf-8"))
+    assert m, "security-full.yml overlay input has no description"
+    for name in sorted(used):
+        assert name in m.group(1), f"security-full.yml overlay description omits {name!r}"

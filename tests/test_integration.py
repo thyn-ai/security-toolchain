@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,8 @@ from thyn_security_toolchain.gate import (
 
 pytestmark = pytest.mark.integration
 
-OVERLAY = "pnpm-monorepo"
+OVERLAY = "python-javascript"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def _owners(out: Path, root: Path) -> dict:
@@ -179,3 +181,36 @@ def test_test_paths_are_out_of_scope_unless_opted_in(fixture_repo: Path, tmp_pat
     policy = tmp_path / "policy"
     run_ci(fixture_repo, OVERLAY, "advisory", changed.ALL, policy, tools=("opengrep",))
     assert paths(policy) == {control}, "the policy holds on top of a repository's .semgrepignore"
+
+
+@pytest.mark.parametrize("overlay", ["python-javascript", "pnpm-monorepo", "python-uv"])
+def test_an_npm_lockfile_alone_is_scanned_by_osv_under_any_overlay(tmp_path: Path, overlay: str):
+    """thyn-ai/mojo-kernels#9: codna read `overlay: pnpm-monorepo` on an npm-managed repository
+    as "OSV will find no lockfile, false clean". A repository holding nothing but a
+    package-lock.json (lodash 4.17.15, no package.json) yields npm findings under the old
+    name, the new name and a Python-only overlay alike: the overlay selects Opengrep packs,
+    osv-scanner's own recursive walk selects lockfiles."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    shutil.copyfile(FIXTURES / "osv" / "package-lock.json.fixture", root / "package-lock.json")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+
+    # No baseline yet: ratchet advises (exit 0) but the lockfile is read and the findings exist.
+    out = tmp_path / "out"
+    assert run_ci(root, overlay, "ratchet", changed.ALL, out, tools=("osv",)) == 0
+    assert "| osv | advisory |" in (out / "summary.md").read_text()
+    findings = parse_osv_json(out / "osv.json", root)
+    assert findings, "package-lock.json was not read"
+    assert {f.path for f in findings} == {"package-lock.json"}
+    keys = [f.key for f in findings]
+    assert all(k.startswith("npm/lodash@4.17.15 :: ") for k in keys), keys
+    assert any(f.rule.startswith("GHSA-") for f in findings), keys
+    assert any(f.severity in ("HIGH", "CRITICAL") for f in findings), [f.severity for f in findings]
+
+    # With a (still empty) committed baseline the same findings block the ratchet.
+    baseline = root / "security" / "baseline" / "osv.txt"
+    baseline.parent.mkdir(parents=True)
+    baseline.write_text("# empty: nothing is known debt yet\n", encoding="utf-8")
+    out2 = tmp_path / "out2"
+    assert run_ci(root, overlay, "ratchet", changed.ALL, out2, tools=("osv",)) == 1
+    assert "| osv | ratchet |" in (out2 / "summary.md").read_text()
