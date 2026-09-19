@@ -32,9 +32,7 @@
     "telys-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
     "thyn-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
     "escrypto-site": { "overlay": "site", "wave": 4, "python": false, "auto_merge": true },
-    "codna-action": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true,
-      "skip": "public repository: cannot consume a private reusable workflow or hook repo until thyn-ai/security-toolchain is public" },
-    "feedback": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true,
-      "skip": "public repository: cannot consume a private reusable workflow or hook repo until thyn-ai/security-toolchain is public" }
+    "codna-action": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true },
+    "feedback": { "overlay": "smoke", "workflow": "smoke", "wave": 4, "python": false, "auto_merge": true }
   }
 }
