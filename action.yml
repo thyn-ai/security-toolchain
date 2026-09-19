@@ -58,7 +58,14 @@ runs:
         set -euo pipefail
         "$PY" -m venv "$RUNNER_TEMP/thyn-sec-venv"
         "$RUNNER_TEMP/thyn-sec-venv/bin/python" -m pip install --quiet --disable-pip-version-check "$GITHUB_ACTION_PATH"
-        echo "$RUNNER_TEMP/thyn-sec-venv/bin" >> "$GITHUB_PATH"
+        # Expose ONLY the thyn-sec entry point on PATH -- never the venv's bin/. Putting the venv's
+        # bin/ on PATH made `python`/`python3`/`pip` in every later step of the caller's job resolve
+        # to this bare venv, silently losing whatever the job had installed into its own
+        # interpreter (thyn-ai/algenta release-sdks.yml, sdk-v1.0.12: the signing step could no
+        # longer import `cryptography`). A caller's Python is the caller's business.
+        mkdir -p "$RUNNER_TEMP/thyn-sec-bin"
+        ln -sf "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" "$RUNNER_TEMP/thyn-sec-bin/thyn-sec"
+        echo "$RUNNER_TEMP/thyn-sec-bin" >> "$GITHUB_PATH"
         "$RUNNER_TEMP/thyn-sec-venv/bin/thyn-sec" --version
 
     - name: Prefetch pinned scanners

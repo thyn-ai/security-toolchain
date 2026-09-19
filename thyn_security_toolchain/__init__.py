@@ -6,4 +6,4 @@ runners; scanner binaries are fetched on first use, verified against the sha256 
 ``data/toolchain.lock.json``, and cached under ``~/.cache/thyn-sec``.
 """
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"

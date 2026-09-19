@@ -64,4 +64,13 @@ jobs:
       - uses: ./
         with:
           prefetch: "false"
+      - name: The action must not shadow the caller's Python (regression: sdk-v1.0.12 signing step)
+        # caller python is not shadowed: only `thyn-sec` may have been added to PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v thyn-sec
+          case "$(command -v python3)" in *thyn-sec-venv*) echo '::error::python3 resolves into the thyn-sec venv'; exit 1;; esac
+          case "$(command -v python || true)" in *thyn-sec-venv*) echo '::error::python resolves into the thyn-sec venv'; exit 1;; esac
+          python3 -c 'import sys; print("caller python:", sys.executable)'
       - run: thyn-sec actionlint .github/workflows/*.yml
