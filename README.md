@@ -117,9 +117,11 @@ CI alone.
   by hand; there is no trigger on a thread being resolved, because the pinned actionlint (1.7.12)
   does not know `pull_request_review_thread` and the pre-commit hook lints every caller.
 * Skipped, each with a `::notice`: a pull request not opened by `dependabot[bot]`, a
-  `pull_request_target` event not triggered by it, a head branch in another repository, a draft,
-  a repository with "Allow auto-merge" off, and a pull request that already has auto-merge
-  enabled -- a human's decision is never overridden, in either direction.
+  `pull_request_target` event not triggered by it, a review event that is not codna's approval
+  (any account can review a public repository's pull request; the caller's `if:` keeps every
+  other review from starting the job at all, and the callee refuses it too), a head branch in
+  another repository, a draft, a repository with "Allow auto-merge" off, and a pull request that
+  already has auto-merge enabled -- a human's decision is never overridden, in either direction.
 * A ruleset that **requires branches to be up to date** (`strict_required_status_checks_policy`)
   turns every other open Dependabot pull request `BEHIND` on each merge, and Dependabot was
   observed not rebasing them (thyn-ai/cohenta, 2026-09-20), so an enabled auto-merge never fires.

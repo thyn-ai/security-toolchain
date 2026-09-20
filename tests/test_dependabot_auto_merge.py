@@ -55,6 +55,13 @@ CALLER_TRIGGERS = {
     "pull_request_target": {"types": ["opened", "synchronize", "reopened"]},
     "pull_request_review": {"types": ["submitted"]},
 }
+# The caller's job condition, as YAML `>-` folds it: one line, single-spaced.
+CALLER_IF = (
+    "github.event.pull_request.user.login == 'dependabot[bot]' "
+    "&& (github.event_name != 'pull_request_review' "
+    "|| (github.event.review.user.login == 'codna-ai[bot]' "
+    "&& github.event.review.state == 'approved'))"
+)
 DOCS_URL = (
     "https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/"
     "trigger-a-workflow#triggering-a-workflow-from-a-workflow"
@@ -407,8 +414,10 @@ def test_template_renders_the_fleet_caller(majors: str):
     assert _triggers(doc) == CALLER_TRIGGERS
     assert doc["permissions"] == {}
     (job,) = doc["jobs"].values()
-    # the pull request's author, which all three events carry; the callee checks the actor
-    assert job["if"] == "github.event.pull_request.user.login == 'dependabot[bot]'"
+    # the pull request's author, which both events carry, and -- codna findings on the rendered
+    # callers (telys#143, codna#575): any account can review a public repository's pull request
+    # -- a review event only when it is the reviewing App's approval; the callee holds the same
+    assert job["if"] == CALLER_IF, job["if"]
     assert job["uses"] == (
         f"thyn-ai/security-toolchain/.github/workflows/dependabot-auto-merge.yml@{SHA}"
     )
@@ -434,6 +443,37 @@ def test_template_documents_the_codna_review_precondition_and_the_app_attributio
     assert "algenta-sdk-sync" in header and "GITHUB_TOKEN" in header
     assert "never checks out" in header
     assert "unresolved finding" in header
+    assert "only Dependabot and codna can start" in header
+
+
+def test_a_review_event_reaches_the_job_only_as_the_reviewers_approval(tmp_path: Path):
+    """codna on the rendered callers: the `pull_request_review` trigger fires for every review by
+    anyone, and any account can review a public repository's pull request. The caller's `if:`
+    admits only the reviewing App's approval; the Decide step refuses everything else too, so a
+    caller without the filter gets the same answer."""
+    script = _decide_script()
+    assert "REVIEW_AUTHOR" in script and "REVIEW_STATE" in script
+    review = {"EVENT_NAME": "pull_request_review", "ACTOR": "x"}
+    for author, state in (
+        ("stranger", "approved"),
+        ("0xamlab", "approved"),
+        ("codna-ai[bot]", "commented"),
+        ("codna-ai[bot]", "changes_requested"),
+        ("codna-ai", "dismissed"),
+        ("", ""),
+    ):
+        rc, _, outputs = _run_decide(
+            {**review, "REVIEW_AUTHOR": author, "REVIEW_STATE": state}, tmp_path
+        )
+        assert rc == 0 and outputs["decision"] == "skip", (author, state, outputs)
+    for author in ("codna-ai[bot]", "codna-ai"):
+        rc, _, outputs = _run_decide(
+            {**review, "REVIEW_AUTHOR": author, "REVIEW_STATE": "approved"}, tmp_path
+        )
+        assert rc == 0 and outputs["decision"] == "enable", (author, outputs)
+    # the caller's filter names the same reviewer the callee defaults to
+    reviewer = _triggers(DOC)["workflow_call"]["inputs"]["reviewer"]["default"]
+    assert f"github.event.review.user.login == '{reviewer}[bot]'" in CALLER_IF
 
 
 def test_template_secret_name_is_the_org_wide_key_and_nothing_else_is_passed():

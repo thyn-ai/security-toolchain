@@ -9,8 +9,12 @@
 #
 # Two events reach it, both carrying the pull request: `pull_request_target` (opened,
 # synchronize, reopened -- Dependabot's own pushes) and `pull_request_review` (submitted -- the
-# codna review landing, minutes after the push). Each run re-reads the facts and decides from
-# scratch; the decision needs the review, which does not exist yet when the pull request opens.
+# codna review landing, minutes after the push). The caller's `if:` lets a review event through
+# only when the reviewer is the reviewing App and the state is `approved`, so nobody but
+# Dependabot and codna can start this secret-bearing job (any account can review a public
+# repository's pull request); the Decide step holds the same rule for a caller that forgets.
+# Each run re-reads the facts and decides from scratch; the decision needs the review, which
+# does not exist yet when the pull request opens.
 # There is no trigger for a review thread being resolved (the pinned actionlint, 1.7.12, does not
 # know `pull_request_review_thread`, and the fleet's pre-commit hook lints every caller): a pull
 # request codna left findings on is the human's from there -- resolve them and merge it, or
@@ -166,6 +170,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
+          REVIEW_AUTHOR: ${{ github.event.review.user.login }}
+          REVIEW_STATE: ${{ github.event.review.state }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_STATE: ${{ steps.facts.outputs.state }}
@@ -209,6 +215,13 @@ jobs:
           [ "$PR_AUTHOR" = "dependabot[bot]" ] || skip "opened by $PR_AUTHOR, not dependabot[bot]"
           if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$ACTOR" != "dependabot[bot]" ]; then
             skip "this pull_request_target event was triggered by $ACTOR, not dependabot[bot]"
+          fi
+          if [ "$EVENT_NAME" = "pull_request_review" ]; then
+            case "$REVIEW_AUTHOR" in
+              "$REVIEWER"|"${REVIEWER}[bot]") ;;
+              *) skip "this review was submitted by $REVIEW_AUTHOR, not $REVIEWER; only its approval starts this job" ;;
+            esac
+            [ "$REVIEW_STATE" = "approved" ] || skip "this $REVIEWER review is '$REVIEW_STATE', not an approval"
           fi
           [ "$CROSS_REPOSITORY" != "true" ] || skip "the head branch is in another repository"
           [ "$PR_STATE" = "open" ] || skip "the pull request is $PR_STATE"
