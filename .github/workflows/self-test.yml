@@ -1,5 +1,7 @@
 # The toolchain's own CI: unit tests, lint, and the integration proof that every fixture
 # trips exactly its owner tool and nothing else. Runs on standard hosted Linux only.
+# Python 3.12 is the floor (pyproject.toml `requires-python`, the org standard): the unit
+# matrix runs it -- the composite action's default -- and the next minor.
 name: self-test
 
 on:
@@ -23,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.12"]
+        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -36,10 +36,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Union
 
 ALL = "ALL"
-Changed = Union[str, list[str]]  # ALL or a concrete list
+Changed = str | list[str]  # ALL or a concrete list
 
 ZERO_SHA = "0" * 40
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")

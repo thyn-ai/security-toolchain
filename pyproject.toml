@@ -8,7 +8,7 @@ version = "0.1.13"
 description = "Pinned, checksum-verified local-first security toolchain (Gitleaks, Opengrep, OSV-Scanner, Trivy config, actionlint) as pre-commit hooks and a reusable GitHub Actions gate."
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 # Deliberately zero runtime dependencies: pre-commit installs this package into an
 # isolated venv on every developer machine and every CI job; anything beyond the
 # standard library would be a second supply chain to pin.
@@ -19,8 +19,9 @@ thyn-sec = "thyn_security_toolchain.cli:main"
 
 [project.optional-dependencies]
 # pyyaml is test-only: tests/test_propagate_workflow.py parses this repo's own workflow.
-# CI installs these hash-pinned from requirements-dev.txt; keep the two in step.
-dev = ["pytest>=8", "pyyaml>=6"]
+# pytest >= 9.0.3 closes GHSA-6w46-j5rx-g56g (tmpdir handling). The floor above is the org
+# standard, Python 3.12+. CI installs these hash-pinned from requirements-dev.txt; keep the two in step.
+dev = ["pytest>=9.0.3", "pyyaml>=6"]
 
 [tool.setuptools]
 packages = ["thyn_security_toolchain"]
@@ -30,7 +31,7 @@ thyn_security_toolchain = ["data/*.json", "data/*.toml"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "S"]

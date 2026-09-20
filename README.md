@@ -194,6 +194,12 @@ to a third party; OSV-Scanner queries the public OSV API with package coordinate
 
 ## Development
 
+Python 3.12 or newer -- the org standard -- on a laptop and on CI alike (`requires-python` in
+`pyproject.toml`; the unit matrix runs 3.12 and 3.13). v0.1.13 dropped 3.9 through 3.11 (3.9
+reached end of life in October 2025), which is also what lets the dev toolchain run pytest
+9.0.3+ (GHSA-6w46-j5rx-g56g). The pre-commit hooks install the package into whichever Python
+pre-commit selects, which has to meet that floor.
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements-dev.txt   # pytest, pyyaml, ruff -- the CI pins
@@ -203,7 +209,8 @@ pytest -m integration           # downloads the pinned scanners, proves one-owne
 ```
 
 `pip install -e ".[dev]" ruff` works too when the exact CI versions do not matter.
-`requirements-dev.txt` carries the hashes CI installs with and says how to regenerate them.
+`requirements-dev.txt` carries the hashes CI installs with and says how to regenerate them;
+Dependabot proposes bumps for it and refreshes the hashes.
 
 The parsers are fuzzed with [atheris](https://github.com/google/atheris) on every push
 (`fuzz/README.md`): the lock validator, the overlay resolver, the changed-file reader, the
