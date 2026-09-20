@@ -157,16 +157,62 @@ def _auto_merge_caller(sha: str, tag: str, majors: str = "false") -> str:
     return _rendered("dependabot-auto-merge.yml", sha=sha, tag=tag, auto_merge_majors=majors)
 
 
-def test_auto_merge_caller_is_rendered_when_absent_and_only_its_pin_moves_afterwards():
+def test_auto_merge_caller_is_rendered_when_absent_and_re_rendered_on_a_bump():
     fresh = propagate.upsert_auto_merge_workflow(None, SHA_OLD, "v0.1.14", majors=False)
     assert fresh == _auto_merge_caller(SHA_OLD, "v0.1.14")
     assert "auto_merge_majors: false" in fresh
-    # a repository that opted majors in keeps that on the bump: only the pin changes
+    # a repository that opted majors in stays opted in on the bump, whatever fleet.json says
     opted_in = _auto_merge_caller(SHA_OLD, "v0.1.14", majors="true")
     bumped = propagate.upsert_auto_merge_workflow(opted_in, SHA_NEW, "v0.1.15", majors=False)
-    assert bumped == opted_in.replace(f"@{SHA_OLD} # v0.1.14", f"@{SHA_NEW} # v0.1.15")
-    assert "auto_merge_majors: true" in bumped
+    assert bumped == _auto_merge_caller(SHA_NEW, "v0.1.15", majors="true")
     assert propagate.upsert_auto_merge_workflow(bumped, SHA_NEW, "v0.1.15", majors=False) == bumped
+    # and one that did not is not opted in by a bump either
+    plain = propagate.upsert_auto_merge_workflow(fresh, SHA_NEW, "v0.1.15", majors=True)
+    assert plain == _auto_merge_caller(SHA_NEW, "v0.1.15", majors="false")
+
+
+V0114_AUTO_MERGE_CALLER_TAIL = """name: dependabot-auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+
+permissions: {}
+
+jobs:
+  enable:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    uses: thyn-ai/security-toolchain/.github/workflows/dependabot-auto-merge.yml@%s # v0.1.14
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      auto_merge_majors: false
+    secrets:
+      app_private_key: ${{ secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY }}
+"""
+
+
+def test_bump_carries_a_v0114_caller_to_the_filtered_review_trigger():
+    """Every caller v0.1.14 rendered lets a `pull_request_review` event through for any
+    reviewer in any state (codna, on thyn-ai/telys#143 and thyn-ai/codna#575), under a header
+    comment that has since changed too. The bump re-renders it, so the caller comes out equal
+    to what the current template renders -- filtered condition, current comments -- and a
+    second bump changes nothing."""
+    v0114 = (
+        "# Dependabot pull requests land on their own: this enables GitHub auto-merge on each\n"
+        "# one.\n"
+        "# Managed by thyn-ai/security-toolchain (propagate bumps the pin).\n"
+        + V0114_AUTO_MERGE_CALLER_TAIL
+        % SHA_OLD
+    )
+    assert "review.state" not in v0114
+    out = propagate.upsert_auto_merge_workflow(v0114, SHA_NEW, "v0.1.15", majors=False)
+    assert out == _auto_merge_caller(SHA_NEW, "v0.1.15")
+    assert "github.event.review.state == 'approved'" in out
+    assert propagate.upsert_auto_merge_workflow(out, SHA_NEW, "v0.1.15", majors=False) == out
 
 
 def test_auto_merge_caller_regex_does_not_touch_the_security_caller_and_vice_versa():

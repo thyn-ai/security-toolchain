@@ -4,7 +4,8 @@
 # this repository's required checks. Nothing here bypasses or replaces that gate. The merge is
 # attributed to the org's algenta-sdk-sync App, so the `push` workflows on the default branch run
 # afterwards (a GITHUB_TOKEN merge would not start them).
-# Managed by thyn-ai/security-toolchain (propagate bumps the pin). Change `auto_merge_majors`
+# Managed by thyn-ai/security-toolchain (propagate re-renders this file on each release, keeping
+# your `auto_merge_majors` choice). Change `auto_merge_majors`
 # here to let semver-major updates through as well; by default a major stays open for a human
 # or codna decision even when approved and green.
 #
@@ -12,9 +13,11 @@
 # (a repository ruleset, or the thyn-ai org ruleset "Codna Review required"). Without that
 # requirement auto-merge would complete on green CI alone.
 #
-# Two events, both carrying the pull request: Dependabot's own pushes, and the codna review being
-# submitted (the decision needs it, and it lands minutes after the push). A pull request codna
-# left findings on is yours from there: resolve them and merge it (or enable auto-merge) yourself.
+# Two events, both carrying the pull request: Dependabot's own pushes, and codna's approving
+# review being submitted (the decision needs it, and it lands minutes after the push). The job
+# runs for no other review -- not another reviewer's, not a comment or a change request -- so
+# only Dependabot and codna can start the secret-bearing path. A pull request codna left findings
+# on is yours from there: resolve them and merge it (or enable auto-merge) yourself.
 # pull_request_target runs on the base branch with this repository's secrets. The called workflow
 # never checks out or executes anything from the pull request: it reads the update type
 # Dependabot signed into its commit and calls the API.
@@ -30,7 +33,10 @@ permissions: {{}}
 
 jobs:
   enable:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && (github.event_name != 'pull_request_review'
+      || (github.event.review.user.login == 'codna-ai[bot]' && github.event.review.state == 'approved'))
     uses: thyn-ai/security-toolchain/.github/workflows/dependabot-auto-merge.yml@{sha} # {tag}
     permissions:
       contents: read

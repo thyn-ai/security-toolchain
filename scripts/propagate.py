@@ -18,8 +18,9 @@ For each repository this opens ONE pull request that touches only:
   2026-09-20: the org ruleset "Codna Review required" or a repository ruleset), which is the
   precondition for adopting that caller.
 
-Existing ``overlay``/``mode``/``auto_merge_majors`` choices in a caller workflow are preserved;
-only the pin moves. Repositories that are mirrored from elsewhere declare ``sync_safe_paths``
+Existing ``overlay``/``mode`` choices in a security caller are preserved and only its pin
+moves; the auto-merge caller is re-rendered from its template with the ``auto_merge_majors``
+choice it already carries. Repositories that are mirrored from elsewhere declare ``sync_safe_paths``
 and the script refuses to write outside them.
 
 Runs anywhere ``gh`` is authenticated (a laptop, or propagate.yml with a token).
@@ -132,11 +133,25 @@ def upsert_workflow(
     return template.read_text(encoding="utf-8").format(sha=sha, tag=tag, overlay=overlay, mode=mode)
 
 
+_AUTO_MERGE_MAJORS_RE = re.compile(r"(?m)^\s*auto_merge_majors:\s*(true|false)\s*$")
+
+
 def upsert_auto_merge_workflow(existing: str | None, sha: str, tag: str, majors: bool) -> str:
-    """The Dependabot auto-merge caller: bump the pin of an existing one (its own
-    ``auto_merge_majors`` choice stays), or render the template."""
+    """The Dependabot auto-merge caller is rendered from the template on every bump.
+
+    Unlike ``security.yml``, whose ``overlay``/``mode`` are per-repository choices edited in
+    place, this caller is fully managed: the template is the file, and the one choice a
+    repository makes in it -- ``auto_merge_majors`` -- is read from the existing caller and
+    carried over (a repository that opted majors in stays opted in whatever fleet.json says).
+    So a release that changes the caller's shape reaches every repository: v0.1.15 narrowed
+    the job condition so a ``pull_request_review`` event starts the job only as codna's
+    approval (on a public repository any account can review a Dependabot pull request), and
+    the v0.1.14 callers took that on their bump.
+    """
     if existing is not None and _AUTO_MERGE_USES_RE.search(existing):
-        return _AUTO_MERGE_USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
+        chosen = _AUTO_MERGE_MAJORS_RE.search(existing)
+        if chosen:
+            majors = chosen.group(1) == "true"
     template = TEMPLATES / "dependabot-auto-merge.yml"
     return template.read_text(encoding="utf-8").format(
         sha=sha, tag=tag, auto_merge_majors="true" if majors else "false"
