@@ -257,6 +257,18 @@ def test_opengrep_targets_drops_missing_and_unsupported(tmp_path: Path):
     assert changed.opengrep_targets(changed.ALL, tmp_path) is None
 
 
+def test_a_lone_all_line_reads_as_all_in_any_letter_case(tmp_path: Path):
+    """The sentinel is case-insensitive in the list file exactly as in THYN_SEC_CHANGED_FILES
+    (a path literally spelled `all` widens to a full scan: the fail-closed direction). The
+    coverage-guided fuzzer found `ALl`; fuzz/corpus/changed/all-mixed-case.txt keeps it."""
+    p = tmp_path / "l.txt"
+    for spelling in ("ALL", "all", "ALl", " All "):
+        p.write_text(spelling + "\n")
+        assert changed.read_list(p) == changed.ALL, spelling
+    p.write_text("ALL\nother.py\n")
+    assert changed.read_list(p) == ["ALL", "other.py"]
+
+
 def test_write_and_read_list_roundtrip(tmp_path: Path):
     p = tmp_path / "l.txt"
     changed.write_list(["b", "a"], p)

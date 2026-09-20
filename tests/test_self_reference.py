@@ -85,15 +85,18 @@ def test_the_workflow_locates_its_own_commit_and_installs_exactly_that(workflow:
     assert "jq -r '.workflow_repository // empty'" in run
     assert "^[0-9a-f]{40}$" in run, "a value that is not a full commit sha must be refused"
     assert "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" in run, "and so must one that is not owner/repo"
+    # a checkout `ref` field named sha/head/commit/ref is a pull-request head to CodeQL's
+    # untrusted-checkout heuristic, by name alone; the located commit is a revision
+    assert "steps.self.outputs.sha" not in run
     assert "::error title=thyn-sec::" in run and "exit 1" in run
-    assert 'echo "sha=$sha" >> "$GITHUB_OUTPUT"' in run
+    assert 'echo "revision=$revision" >> "$GITHUB_OUTPUT"' in run
     assert 'echo "repository=$repository" >> "$GITHUB_OUTPUT"' in run
 
     fetch = steps[_index(steps, name=FETCH)]
     assert fetch["uses"].startswith(CHECKOUT_ACTION)
     assert fetch["with"] == {
         "repository": "${{ steps.self.outputs.repository }}",
-        "ref": "${{ steps.self.outputs.sha }}",
+        "ref": "${{ steps.self.outputs.revision }}",
         "path": TOOLCHAIN_CHECKOUT,
         "persist-credentials": False,
     }
@@ -105,7 +108,7 @@ def test_the_workflow_locates_its_own_commit_and_installs_exactly_that(workflow:
     assert park["run"].strip() == f'mv "$GITHUB_WORKSPACE/{TOOLCHAIN_CHECKOUT}" {PARKED}'
 
     verify = steps[_index(steps, name=VERIFY)]
-    assert verify["env"] == {"EXPECT_REF": "${{ steps.self.outputs.sha }}"}
+    assert verify["env"] == {"EXPECT_REF": "${{ steps.self.outputs.revision }}"}
     assert 'thyn-sec verify-toolchain --expect-ref "$EXPECT_REF"' in verify["run"]
 
     back = steps[-1]

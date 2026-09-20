@@ -4,8 +4,10 @@ Properties, for arbitrary paths, list files, event payloads and environment valu
 
 * ``MANIFEST_RE`` / ``IAC_RE`` classify any path without raising; ``ALL`` matches everything.
 * ``write_list`` then ``read_list`` returns the list that was written (whitespace-trimmed,
-  empty lines dropped) and ``ALL`` round-trips as ``ALL`` -- the file format the CI job hands
-  from ``thyn-sec changed-files`` to ``thyn-sec ci`` loses nothing.
+  empty lines dropped), and a lone ``ALL`` line -- in any letter case, the rule ``read_list``
+  shares with ``THYN_SEC_CHANGED_FILES`` -- reads back as ``ALL``: the file format the CI job
+  hands from ``thyn-sec changed-files`` to ``thyn-sec ci`` loses nothing. (The coverage-guided
+  run found ``ALl``; ``corpus/changed/all-mixed-case.txt`` keeps it.)
 * ``from_github_event`` returns ``ALL`` or a sorted, duplicate-free list of strings for any
   JSON payload and any event name -- never an exception. The two things that would leave the
   process (the PR-files API and ``git diff``) are stubbed, so the harness exercises the
@@ -252,8 +254,8 @@ def exercise_lists(fdp: Any) -> None:
         changed.write_list(lines, LIST_FILE)
         back = changed.read_list(LIST_FILE)
         expected = [ln.strip() for ln in lines]
-        if expected == ["ALL"]:
-            check(back == changed.ALL, "a single ALL line reads as ALL")
+        if len(expected) == 1 and expected[0].upper() == changed.ALL:
+            check(back == changed.ALL, "a lone ALL line, in any letter case, reads as ALL")
         else:
             check(back == expected, f"list round-trip changed the content: {back!r}")
     check(changed.describe(changed.ALL).startswith("ALL"), "describe(ALL)")

@@ -51,26 +51,28 @@ jobs:
         # that defines this job -- the ref the caller pinned, resolved to a commit -- where the
         # `github` context keeps describing the caller. Read through toJSON(job): the pinned
         # actionlint (1.7.12) predates these job properties. Anything but a 40-hex commit and an
-        # owner/repository name refuses to go on rather than install an unknown toolchain.
+        # owner/repository name refuses to go on rather than install an unknown toolchain. The
+        # output is named for what it is, a revision: CodeQL's untrusted-checkout heuristic reads
+        # a checkout `ref` field called sha/head/commit/ref as a pull-request head by name alone.
         id: self
         env:
           JOB_CONTEXT: ${{ toJSON(job) }}
         run: |
           set -euo pipefail
-          sha="$(jq -r '.workflow_sha // empty' <<<"$JOB_CONTEXT")"
+          revision="$(jq -r '.workflow_sha // empty' <<<"$JOB_CONTEXT")"
           repository="$(jq -r '.workflow_repository // empty' <<<"$JOB_CONTEXT")"
-          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ && "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-            echo "::error title=thyn-sec::cannot locate this workflow's own commit (job.workflow_repository=${repository:-unset}, job.workflow_sha=${sha:-unset}); refusing to install an unknown toolchain"
+          if ! [[ "$revision" =~ ^[0-9a-f]{40}$ && "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error title=thyn-sec::cannot locate this workflow's own commit (job.workflow_repository=${repository:-unset}, job.workflow_sha=${revision:-unset}); refusing to install an unknown toolchain"
             exit 1
           fi
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
           echo "repository=$repository" >> "$GITHUB_OUTPUT"
 
       - name: Fetch the toolchain at that commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ steps.self.outputs.repository }}
-          ref: ${{ steps.self.outputs.sha }}
+          ref: ${{ steps.self.outputs.revision }}
           path: .thyn-sec-toolchain
           persist-credentials: false
 
@@ -88,7 +90,7 @@ jobs:
 
       - name: Verify pins
         env:
-          EXPECT_REF: ${{ steps.self.outputs.sha }}
+          EXPECT_REF: ${{ steps.self.outputs.revision }}
         run: thyn-sec verify-toolchain --expect-ref "$EXPECT_REF"
 
       - name: Secrets scan
