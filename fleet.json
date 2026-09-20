@@ -16,10 +16,30 @@
     "would skip the JS; engine/codna are reserved names). Its Mojo sources are excluded by the repo's own",
     ".semgrepignore (*.mojo).",
     "Excluded on purpose: decimas, decimas-site (empty); codna-app-smoke, codna-app-e2e-smoke-1783715773,",
-    "codna-private-test, test-codna-app-e2e (deliberately broken e2e fixtures)."
+    "codna-private-test, test-codna-app-e2e (deliberately broken e2e fixtures).",
+    "dependabot_auto_merge (default true): render .github/workflows/dependabot-auto-merge.yml, the caller that",
+    "enables auto-merge on Dependabot pull requests. Precondition, checked 2026-09-20 for every repository here:",
+    "the default branch requires the `codna review` status check -- the org ruleset 'Codna Review required'",
+    "(23610580) for the private repositories, a repository ruleset for the six public ones and the seven",
+    "Vercel sites' 'Deploy gate (main)'. Set false on a repository that drops that requirement.",
+    "dependabot_auto_merge_majors (default false): also let semver-major updates auto-merge; the rendered",
+    "caller's own `auto_merge_majors:` is preserved on later bumps, so flip it in the repository too.",
+    "The caller enables auto-merge only after codna's review is APPROVED with zero unresolved threads (its",
+    "check-run concludes neutral whenever it left an inline finding, and a neutral conclusion passes a",
+    "required check; rulesets with required_review_thread_resolution -- codna, algenta, cohenta, codna-site --",
+    "would otherwise hold an enabled auto-merge forever). Findings are never resolved by the workflow.",
+    "Up-to-date policy (strict_required_status_checks_policy), audited 2026-09-20: a merge turns the other",
+    "open Dependabot PRs BEHIND and Dependabot did not rebase them, so the policy is off on every private",
+    "repository (cohenta 17646026 and algenta 17410382 switched off that day). Public repositories keep it:",
+    "algenta-sdk behind its merge queue (which rebases), and algenta-integrations, mojo-kernels, codna-action,",
+    "feedback without one -- there a Dependabot PR lands on its own only while up to date, else after",
+    "`@dependabot rebase`; OpenSSF Scorecard's Branch-Protection check scores the policy, so it stays."
   ],
   "toolchain": { "repo": "thyn-ai/security-toolchain", "default_branch": "main" },
-  "defaults": { "mode": "advisory", "workflow": "full", "auto_merge": false, "ruff_rev": "v0.12.0" },
+  "defaults": {
+    "mode": "advisory", "workflow": "full", "auto_merge": false, "ruff_rev": "v0.12.0",
+    "dependabot_auto_merge": true
+  },
   "repos": {
     "algenta-integrations": { "overlay": "pnpm-monorepo", "wave": 1, "python": true },
     "algenta-sdk": {

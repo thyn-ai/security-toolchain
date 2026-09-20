@@ -22,6 +22,9 @@ _USES_RE = re.compile(
     r"[ \t]*(?:#[ \t]*([^\s]+))?"
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# The reusable workflows that scan a checkout; a pin on any other workflow of this repository is
+# verified the same way but does not stand in for the gate.
+GATE_WORKFLOWS = frozenset({"security-full.yml", "security-smoke.yml"})
 _HOOK_TYPES_RE = re.compile(r"^default_install_hook_types:\s*\[([^\]]*)\]", re.M)
 
 
@@ -101,13 +104,16 @@ def verify_repo(root: Path, expect_ref: str | None = None) -> list[str]:
                     f"{where} comment {comment} != checked-out toolchain ref {expect_ref}"
                 )
 
-    if calls and rev is None and pc.is_file():
+    # The two cross-checks below are about the security gate: the Dependabot auto-merge caller
+    # pins the toolchain too (checked above like any other pin) but scans nothing.
+    gates = [c for c in calls if c[1] in GATE_WORKFLOWS]
+    if gates and rev is None and pc.is_file():
         problems.append(
             "CI calls the toolchain but .pre-commit-config.yaml has no "
             "thyn-ai/security-toolchain block; developers would only learn about findings "
             "after pushing"
         )
-    if rev is not None and not calls and wf_dir.is_dir():
+    if rev is not None and not gates and wf_dir.is_dir():
         problems.append(
             "pre-commit uses the toolchain but no workflow calls security-full/security-smoke; "
             "nothing re-checks a clean checkout"

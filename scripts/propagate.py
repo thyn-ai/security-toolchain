@@ -9,11 +9,18 @@ For each repository this opens ONE pull request that touches only:
   ``.github/workflows/security.yml`` (created from the template if absent), and
 * the ``merge_group:`` trigger next to ``pull_request:`` in that workflow, added when it is
   missing (mirroring the pull-request ``branches`` filter), so the gate stays a valid required
-  check behind a merge queue.
+  check behind a merge queue, and
+* the same pin in ``.github/workflows/dependabot-auto-merge.yml`` (created from the template if
+  absent), the caller that lets Dependabot pull requests land on their own once the repository's
+  ruleset requirements are met. ``dependabot_auto_merge: false`` on a repository leaves it out;
+  ``dependabot_auto_merge_majors: true`` renders the opt-in for semver-major updates. Every
+  fleet repository requires the ``codna review`` status on its default branch (checked
+  2026-09-20: the org ruleset "Codna Review required" or a repository ruleset), which is the
+  precondition for adopting that caller.
 
-Existing ``overlay``/``mode`` choices in a caller workflow are preserved; only the pin
-moves. Repositories that are mirrored from elsewhere declare ``sync_safe_paths`` and the
-script refuses to write outside them.
+Existing ``overlay``/``mode``/``auto_merge_majors`` choices in a caller workflow are preserved;
+only the pin moves. Repositories that are mirrored from elsewhere declare ``sync_safe_paths``
+and the script refuses to write outside them.
 
 Runs anywhere ``gh`` is authenticated (a laptop, or propagate.yml with a token).
 """
@@ -37,6 +44,10 @@ TOOLCHAIN_REPO = "thyn-ai/security-toolchain"
 
 _USES_RE = re.compile(
     r"(uses:\s*thyn-ai/security-toolchain/\.github/workflows/security-(?:full|smoke)\.ya?ml@)"
+    r"[^\s#]+([ \t]*#[ \t]*[^\s]+)?"
+)
+_AUTO_MERGE_USES_RE = re.compile(
+    r"(uses:\s*thyn-ai/security-toolchain/\.github/workflows/dependabot-auto-merge\.ya?ml@)"
     r"[^\s#]+([ \t]*#[ \t]*[^\s]+)?"
 )
 # A block-style `on:` and the indented entries under it; a flow-style `on: [push, ...]` does not
@@ -119,6 +130,17 @@ def upsert_workflow(
         return add_merge_group_trigger(_carry_forward_permissions(text, kind))
     template = TEMPLATES / ("security.yml" if kind == "full" else "security-smoke.yml")
     return template.read_text(encoding="utf-8").format(sha=sha, tag=tag, overlay=overlay, mode=mode)
+
+
+def upsert_auto_merge_workflow(existing: str | None, sha: str, tag: str, majors: bool) -> str:
+    """The Dependabot auto-merge caller: bump the pin of an existing one (its own
+    ``auto_merge_majors`` choice stays), or render the template."""
+    if existing is not None and _AUTO_MERGE_USES_RE.search(existing):
+        return _AUTO_MERGE_USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
+    template = TEMPLATES / "dependabot-auto-merge.yml"
+    return template.read_text(encoding="utf-8").format(
+        sha=sha, tag=tag, auto_merge_majors="true" if majors else "false"
+    )
 
 
 def add_merge_group_trigger(text: str) -> str:
@@ -212,6 +234,15 @@ def plan(repo_dir: Path, cfg: dict, defaults: dict, tag: str, sha: str) -> list[
     if new_wf != wf_text:
         changes.append((wf, new_wf))
 
+    if cfg.get("dependabot_auto_merge", defaults.get("dependabot_auto_merge", True)):
+        am = repo_dir / ".github" / "workflows" / "dependabot-auto-merge.yml"
+        am_text = am.read_text(encoding="utf-8") if am.is_file() else None
+        new_am = upsert_auto_merge_workflow(
+            am_text, sha, tag, bool(cfg.get("dependabot_auto_merge_majors", False))
+        )
+        if new_am != am_text:
+            changes.append((am, new_am))
+
     safe = cfg.get("sync_safe_paths")
     if safe:
         for path, _ in changes:
@@ -255,7 +286,12 @@ def propagate(
             "  `security/baseline/`\n"
             "- baselines are measured on CI via `workflow_dispatch` → `measure_baseline`\n"
             "- the caller triggers on `merge_group` as well as `pull_request` and `push`, so the\n"
-            "  gate stays a valid required check behind a merge queue\n\n"
+            "  gate stays a valid required check behind a merge queue\n"
+            "- `.github/workflows/dependabot-auto-merge.yml` enables auto-merge on a Dependabot\n"
+            "  pull request once codna's review is APPROVED with no unresolved thread\n"
+            "  (minor/patch; a major stays open unless the caller opts in), attributed to the\n"
+            "  algenta-sdk-sync App so the `push` workflows run after the merge; GitHub\n"
+            "  completes the merge only once `codna review` and the required checks pass\n\n"
             f"Opened by `scripts/propagate.py` from {TOOLCHAIN_REPO}."
         )
         message = title + "\n\n" + body + (_TRAILER if args.attribution else "")
