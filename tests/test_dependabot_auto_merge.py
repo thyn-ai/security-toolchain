@@ -175,6 +175,14 @@ def test_facts_step_reads_reviews_and_threads_with_the_read_only_default_token()
     assert "reviewThreads(first: 100, after: $endCursor)" in run and "isResolved" in run
     assert "--paginate --slurp" in run and "pageInfo { hasNextPage endCursor }" in run
     assert "totalCount" not in run
+    # gh refuses `--slurp` together with `--jq` ("the `--slurp` option is not supported with
+    # `--jq` or `--template`"); v0.1.14 shipped that combination and the step failed on the
+    # first live event. The slurped array goes to jq itself, on the pipeline's next line.
+    for command in re.split(r"\n(?!\s*\|)", run):
+        if "gh api" in command and "--slurp" in command:
+            head = command.split("|", 1)[0]
+            assert "--jq" not in head, command
+            assert re.search(r"\|\s*jq ", command), command
     assert "checks" not in run.lower() and "statusCheckRollup" not in run
     # read-only: no mutation, no merge, no thread resolution
     forbidden = ("gh pr merge", "-X PUT", "-X POST", "-X PATCH", "mutation", "resolveReviewThread")
