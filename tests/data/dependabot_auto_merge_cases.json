@@ -38,6 +38,7 @@
     {"name": "major is enabled only when the caller opts in", "env": {"UPDATE_TYPE": "version-update:semver-major", "AUTO_MERGE_MAJORS": "true"}, "expect": {"decision": "enable"}},
     {"name": "requirement-range change has no update-type and stays open", "env": {"UPDATE_TYPE": ""}, "expect": {"decision": "skip", "reason_contains": "no update-type"}},
     {"name": "an update-type this script does not know stays open", "env": {"UPDATE_TYPE": "security-update"}, "expect": {"decision": "skip", "reason_contains": "unrecognised update-type"}},
+    {"name": "a value with a newline reaches the reason output whole (multiline-safe GITHUB_OUTPUT)", "env": {"UPDATE_TYPE": "odd\nvalue"}, "expect": {"decision": "skip", "reason_contains": "unrecognised update-type 'odd\nvalue'"}},
     {"name": "codna has not reviewed yet (the opened event)", "env": {"REVIEWER_REVIEW": ""}, "expect": {"decision": "skip", "reason_contains": "codna-ai has not reviewed yet"}},
     {"name": "codna commented without approving", "env": {"REVIEWER_REVIEW": "COMMENTED"}, "expect": {"decision": "skip", "reason_contains": "is COMMENTED, not APPROVED"}},
     {"name": "codna requested changes", "env": {"REVIEWER_REVIEW": "CHANGES_REQUESTED"}, "expect": {"decision": "skip", "reason_contains": "is CHANGES_REQUESTED, not APPROVED"}},

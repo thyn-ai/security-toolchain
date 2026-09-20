@@ -124,18 +124,24 @@ jobs:
           set -euo pipefail
           allow="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.allow_auto_merge')"
           pr="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,autoMergeRequest,mergeStateStatus,reviewDecision,reviews)"
-          # unresolved = every thread minus the resolved ones in the first page: a pull request
-          # with more than a hundred threads over-counts, which only ever skips. The `$name`
-          # tokens in the query are GraphQL variables, bound with -F below.
+          # Every review thread, across pages (`--paginate` follows pageInfo through $endCursor,
+          # `--slurp` hands the pages to one jq), so the count is exact however many threads a
+          # pull request carries. The `$name` tokens in the query are GraphQL variables, bound
+          # with -F below.
           query="$(cat <<'GRAPHQL'
-            query($owner: String!, $name: String!, $number: Int!) {
+            query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
               repository(owner: $owner, name: $name) {
-                pullRequest(number: $number) { reviewThreads(first: 100) { totalCount nodes { isResolved } } }
+                pullRequest(number: $number) {
+                  reviewThreads(first: 100, after: $endCursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { isResolved }
+                  }
+                }
               }
             }
           GRAPHQL
           )"
-          unresolved="$(gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" -f query="$query" --jq '.data.repository.pullRequest.reviewThreads | .totalCount - ([.nodes[] | select(.isResolved)] | length)')"
+          unresolved="$(gh api graphql --paginate --slurp -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" -f query="$query" --jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length')"
           {
             echo "allow_auto_merge=$allow"
             echo "state=$(jq -r '.state | ascii_downcase' <<<"$pr")"
@@ -176,9 +182,11 @@ jobs:
           set -euo pipefail
           skip() {
             echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: not enabling auto-merge -- $1"
+            # the reason embeds values read from the API and the metadata action, so it is
+            # written in the multiline-safe `name<<DELIM` form rather than `name=value`
             {
               echo "decision=skip"
-              echo "reason=$1"
+              printf 'reason<<_REASON_\n%s\n_REASON_\n' "$1"
             } >> "$GITHUB_OUTPUT"
             exit 0
           }

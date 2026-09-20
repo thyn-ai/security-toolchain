@@ -170,8 +170,11 @@ def test_facts_step_reads_reviews_and_threads_with_the_read_only_default_token()
     assert "reviewDecision" in run and "isCrossRepository" in run
     # the reviewer's LATEST review, matched with or without the [bot] suffix
     assert "| last | .state" in run and '($r + "[bot]")' in run
-    # unresolved threads come from GraphQL; the check-run conclusion is never read
-    assert "reviewThreads(first: 100)" in run and "isResolved" in run
+    # unresolved threads come from GraphQL, every page of them (codna finding on #16: a
+    # first-page-only count over-counted past 100 threads); the check-run conclusion is never read
+    assert "reviewThreads(first: 100, after: $endCursor)" in run and "isResolved" in run
+    assert "--paginate --slurp" in run and "pageInfo { hasNextPage endCursor }" in run
+    assert "totalCount" not in run
     assert "checks" not in run.lower() and "statusCheckRollup" not in run
     # read-only: no mutation, no merge, no thread resolution
     forbidden = ("gh pr merge", "-X PUT", "-X POST", "-X PATCH", "mutation", "resolveReviewThread")
@@ -260,11 +263,31 @@ def _run_decide(env_overrides: dict[str, str], tmp_path: Path) -> tuple[int, str
     proc = subprocess.run(
         ["bash", "-c", _decide_script()], env=env, capture_output=True, text=True, check=False
     )
+    return proc.returncode, proc.stdout + proc.stderr, _parse_github_output(out.read_text())
+
+
+def _parse_github_output(text: str) -> dict[str, str]:
+    """Read $GITHUB_OUTPUT the way the runner does: `name=value` lines, and the multiline-safe
+    `name<<DELIM` ... `DELIM` form, whose value keeps its newlines."""
     outputs: dict[str, str] = {}
-    for line in out.read_text().splitlines():
-        key, _, value = line.partition("=")
-        outputs[key] = value
-    return proc.returncode, proc.stdout + proc.stderr, outputs
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if "<<" in line and "=" not in line.split("<<", 1)[0]:
+            key, delim = line.split("<<", 1)
+            body: list[str] = []
+            i += 1
+            while i < len(lines) and lines[i] != delim:
+                body.append(lines[i])
+                i += 1
+            assert i < len(lines), f"unterminated heredoc for {key!r} in GITHUB_OUTPUT"
+            outputs[key] = "\n".join(body)
+        else:
+            key, _, value = line.partition("=")
+            outputs[key] = value
+        i += 1
+    return outputs
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=[c["name"] for c in CASES["cases"]])
@@ -283,6 +306,11 @@ def test_decide(case: dict, tmp_path: Path):
         assert expect["reason_contains"] in outputs["reason"], outputs
         assert "::notice title=dependabot-auto-merge::" in combined, combined
         assert outputs["reason"] in combined
+        # the reason is written in the multiline-safe form (codna finding on #16), so a value
+        # with a newline reaches the summary whole instead of becoming a second, bogus output
+        raw = (tmp_path / "output.txt").read_text()
+        assert "reason<<_REASON_\n" in raw and "\nreason=" not in raw, raw
+        assert set(outputs) == {"decision", "reason"}, outputs
     else:
         assert outputs["reason"] == ""
         assert "::notice" not in combined and "::error" not in combined, combined
