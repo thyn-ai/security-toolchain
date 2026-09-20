@@ -1,9 +1,11 @@
 # Authoritative security gate -- re-runs the pre-push policy on a clean checkout.
 # Managed by thyn-ai/security-toolchain (propagate bumps the pin). Change `overlay`/`mode` here.
+# `merge_group` keeps the gate a valid required check behind a merge queue.
 name: security
 
 on:
   pull_request:
+  merge_group:
   push:
     branches: [main]
   schedule:

@@ -263,3 +263,129 @@ def test_write_and_read_list_roundtrip(tmp_path: Path):
     assert changed.read_list(p) == ["b", "a"]
     changed.write_list(changed.ALL, p)
     assert changed.read_list(p) == changed.ALL
+
+
+# ------------------------------------------------------------------------------- merge groups
+
+QUEUE_REF = "refs/heads/gh-readonly-queue/main/pr-104-" + "9" * 40
+
+
+def _merge_group_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: dict, *, authenticated: bool = False
+) -> None:
+    """Pretend to be a ``merge_group`` run: payload on disk, the queue ref, a token on request."""
+    monkeypatch.delenv("THYN_SEC_CHANGED_FILES", raising=False)
+    for key in ("GITHUB_TOKEN", "GH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    if authenticated:
+        monkeypatch.setenv("GITHUB_TOKEN", "t")
+    ev = tmp_path / "event.json"
+    ev.write_text(json.dumps(payload))
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(ev))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "thyn-ai/x")
+    monkeypatch.setenv("GITHUB_REF", QUEUE_REF)
+    monkeypatch.setenv("GITHUB_REF_NAME", QUEUE_REF[len("refs/heads/") :])
+
+
+@pytest.mark.parametrize(
+    "head_ref,number",
+    [
+        (QUEUE_REF, 104),
+        ("refs/heads/gh-readonly-queue/release/1.x/pr-7-" + "a" * 40, 7),  # base with a slash
+        ("refs/heads/gh-readonly-queue/main/pr-0-" + "a" * 40, None),
+        ("refs/heads/gh-readonly-queue/main/pr-07-" + "a" * 40, None),
+        ("refs/heads/gh-readonly-queue/main/pr-7-" + "a" * 39, None),  # not a full base sha
+        ("refs/heads/gh-readonly-queue/main/pr-7-" + "a" * 40 + "/x", None),
+        ("refs/heads/main", None),
+        ("", None),
+        (None, None),
+        (7, None),
+    ],
+)
+def test_merge_group_pull_number_is_read_off_the_queue_ref(head_ref, number):
+    assert changed.merge_group_pull_number(head_ref) == number
+
+
+def test_merge_group_is_scoped_like_the_pull_request_it_was_built_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list = []
+
+    def api(repo: str, number: int, token: str, server: str):
+        calls.append((repo, number, token, server))
+        return ["b.py", "a.py", "a.py"]
+
+    def never_diff(*_a, **_k):  # pragma: no cover - the assertion is the point
+        raise AssertionError("the API answered; git diff must not be consulted")
+
+    monkeypatch.setattr(changed, "_api_pr_files", api)
+    monkeypatch.setattr(changed, "_git_diff", never_diff)
+    _merge_group_event(
+        tmp_path,
+        monkeypatch,
+        {
+            "action": "checks_requested",
+            "merge_group": {
+                "head_sha": "1" * 40,
+                "head_ref": QUEUE_REF,
+                "base_sha": "0" * 40,
+                "base_ref": "refs/heads/main",
+            },
+            "repository": {"default_branch": "main"},
+        },
+        authenticated=True,
+    )
+    assert changed.changed_files() == ["a.py", "b.py"]
+    assert calls == [("thyn-ai/x", 104, "t", "https://github.com")]
+
+
+def test_merge_group_without_a_token_diffs_base_sha_to_head_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo, before, after = _two_commit_repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    def never_api(*_a, **_k):  # pragma: no cover - the assertion is the point
+        raise AssertionError("the PR files API needs a token")
+
+    monkeypatch.setattr(changed, "_api_pr_files", never_api)
+    _merge_group_event(
+        tmp_path,
+        monkeypatch,
+        {"merge_group": {"head_sha": after, "head_ref": QUEUE_REF, "base_sha": before}},
+    )
+    assert changed.changed_files() == ["b.py"]
+
+
+def test_merge_group_falls_back_to_the_diff_when_the_api_cannot_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo, before, after = _two_commit_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(changed, "_api_pr_files", lambda *_a, **_k: None)
+    _merge_group_event(
+        tmp_path,
+        monkeypatch,
+        {"merge_group": {"head_sha": after, "head_ref": QUEUE_REF, "base_sha": before}},
+        authenticated=True,
+    )
+    assert changed.changed_files() == ["b.py"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"merge_group": {}},
+        {"merge_group": {"head_ref": QUEUE_REF}},  # a number but no token, and nothing to diff
+        {"merge_group": {"head_ref": "refs/heads/x", "head_sha": "1" * 40, "base_sha": "0" * 40}},
+    ],
+    ids=["no-group", "empty-group", "number-only", "no-number-and-no-history"],
+)
+def test_merge_group_that_names_nothing_derivable_is_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: dict
+):
+    monkeypatch.chdir(tmp_path)  # not a git repo: the diff fallback must fail closed
+    _merge_group_event(tmp_path, monkeypatch, payload)
+    assert changed.changed_files() == changed.ALL

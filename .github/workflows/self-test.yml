@@ -57,6 +57,20 @@ jobs:
       - name: Pins are consistent in this repo
         run: thyn-sec verify-toolchain
 
+  gate:
+    # The reusable workflow, called from this repository at the commit under test -- the path
+    # every fleet caller takes: the job locates its own commit (job.workflow_sha), checks it out,
+    # installs it through the composite action in that checkout, parks the source out of the
+    # scanned tree and runs `verify-toolchain --expect-ref` against the exact commit. Proven on
+    # every pull request, before a release can pin it. Smoke rather than full: the full gate's
+    # SARIF upload wants `security-events: write`, which this repository's tree has no use for.
+    name: reusable workflow installs the commit under test
+    uses: ./.github/workflows/security-smoke.yml
+    permissions:
+      contents: read
+    with:
+      mode: ratchet
+
   actionlint:
     name: workflow lint
     runs-on: ubuntu-latest

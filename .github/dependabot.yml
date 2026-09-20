@@ -7,9 +7,9 @@
 #
 # What Dependabot sees in this repository:
 #   * .github/workflows/*.yml and action.yml -- the SHA-pinned actions: the `github-actions`
-#     entry. The `uses: thyn-ai/security-toolchain@vX.Y.Z` self-reference in the two reusable
-#     workflows is excluded: it is this repository's own release version, kept equal to
-#     `__version__` by tests/test_self_reference.py and bumped by hand in every release commit.
+#     entry. Nothing here references thyn-ai/security-toolchain by version: the two reusable
+#     workflows install the toolchain from their own commit (tests/test_self_reference.py), so
+#     there is no self-reference to exclude.
 #   * requirements-dev.txt and requirements-fuzz.txt -- the hash-pinned CI toolchains (pytest,
 #     pyyaml, ruff; atheris): the `pip` entry, which updates the `--hash` lines with the version.
 #     The package itself has no runtime dependencies (pyproject.toml, `dependencies = []`).
@@ -31,8 +31,6 @@ updates:
       actions:
         patterns:
           - "*"
-    ignore:
-      - dependency-name: "thyn-ai/security-toolchain*"
     commit-message:
       prefix: chore(ci)
 

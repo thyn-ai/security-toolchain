@@ -1,0 +1,1 @@
+{"action": "checks_requested", "merge_group": {"head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "head_ref": "refs/heads/gh-readonly-queue/main/pr-104-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "base_ref": "refs/heads/main"}, "repository": {"default_branch": "main"}}

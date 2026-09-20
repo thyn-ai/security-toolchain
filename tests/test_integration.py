@@ -214,3 +214,79 @@ def test_an_npm_lockfile_alone_is_scanned_by_osv_under_any_overlay(tmp_path: Pat
     out2 = tmp_path / "out2"
     assert run_ci(root, overlay, "ratchet", changed.ALL, out2, tools=("osv",)) == 1
     assert "| osv | ratchet |" in (out2 / "summary.md").read_text()
+
+
+def test_merge_group_scopes_the_real_scan_to_the_group_diff(
+    fixture_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A synthetic ``merge_group`` payload over the fixture repository: a second commit adds one
+    clean file, the queue ref names a pull request but no token is available, so the selector
+    diffs ``base_sha``...``head_sha``; the real scanners then cover that one file only and the
+    categories it never touched are skipped -- the pull-request scoping, on the merge-queue
+    event, end to end."""
+
+    def rev() -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=fixture_repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    base = rev()
+    queued = fixture_repo / "clean" / "queued.py"
+    queued.write_text("def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=fixture_repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "q",
+        ],
+        cwd=fixture_repo,
+        check=True,
+    )
+    head = rev()
+    queue_ref = f"refs/heads/gh-readonly-queue/main/pr-7-{base}"
+    event = tmp_path / "merge_group.json"
+    event.write_text(
+        json.dumps(
+            {
+                "action": "checks_requested",
+                "merge_group": {
+                    "head_sha": head,
+                    "head_ref": queue_ref,
+                    "base_sha": base,
+                    "base_ref": "refs/heads/main",
+                },
+                "repository": {"default_branch": "main"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    for key in ("THYN_SEC_CHANGED_FILES", "GITHUB_TOKEN", "GH_TOKEN"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_REPOSITORY", "thyn-ai/fixture")
+    monkeypatch.setenv("GITHUB_REF", queue_ref)
+    monkeypatch.chdir(fixture_repo)
+
+    scope = changed.changed_files()
+    assert scope == ["clean/queued.py"]
+    out = tmp_path / "out"
+    rc = run_ci(fixture_repo, OVERLAY, "ratchet", scope, out, tools=("opengrep", "osv", "trivy"))
+    summary = (out / "summary.md").read_text()
+    assert rc == 0, summary
+    assert "scope 1 changed file(s)" in summary
+    assert "osv-scanner: no dependency manifest or lockfile changed; skipped" in summary
+    assert "trivy config: no infrastructure definition changed; skipped" in summary
+    assert not (out / "osv.json").exists() and not (out / "trivy.sarif").exists()
+    assert parse_opengrep_sarif(out / "opengrep.sarif", fixture_repo) == []
