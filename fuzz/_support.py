@@ -199,9 +199,10 @@ def _mutate_once(fdp: Provider, node: Any, keys: Sequence[str]) -> None:
     elif op == 1:
         del parent[slot]
     elif isinstance(parent, dict):
-        parent[text(fdp, 12) if fdp.ConsumeBool() else fdp.PickValueInList(keys)] = json_value(
-            fdp, keys, 2
-        )
+        # Same guard as ``json_value``: an empty *keys* must fall back to a generated name
+        # rather than index into an empty sequence.
+        new_key = fdp.PickValueInList(keys) if keys and fdp.ConsumeBool() else text(fdp, 12)
+        parent[new_key] = json_value(fdp, keys, 2)
     else:
         parent.insert(fdp.ConsumeIntInRange(0, len(parent)), json_value(fdp, keys, 2))
 

@@ -91,3 +91,17 @@ def test_the_seed_provider_is_deterministic_and_never_runs_dry():
     assert empty.ConsumeUnicodeNoSurrogates(8) == ""
     assert empty.ConsumeFloat() == 0.0
     assert empty.PickValueInList(["first", "second"]) == "first"
+
+
+def test_mutate_tolerates_an_empty_key_set():
+    """``mutate`` must never index into an empty *keys*: with the provider exhausted every
+    ``ConsumeBool`` is ``False``, which is exactly the path that used to reach
+    ``PickValueInList([])``. The dict-add branch has to fall back to a generated name."""
+    support = _load(FUZZ / "_support.py")
+    # Bytes chosen so the walk stops at the root dict and the op selects "add a key" (op == 2):
+    # a fixed prefix drives the descent depth and op, then the provider runs dry.
+    seed = bytes([0x01, 0x00, 0x02])
+    for data in (seed, seed + b"\xff" * 16, b""):
+        fdp = support.SeedProvider(data)
+        out = support.mutate(fdp, {"a": 1, "b": [1, 2]}, keys=[], rounds=8)
+        assert isinstance(out, dict)
