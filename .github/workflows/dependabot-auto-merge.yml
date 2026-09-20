@@ -337,7 +337,9 @@ jobs:
                 disarm "new head $HEAD_SHA, waiting for $REVIEWER on this head (pushed by $ACTOR)"
               fi
               [ "$REVIEWER_REVIEW" = "APPROVED" ] || disarm "the latest $REVIEWER review is ${REVIEWER_REVIEW:-missing}, not APPROVED"
-              [ -n "$REVIEWER_REVIEW_COMMIT" ] && [ "$REVIEWER_REVIEW_COMMIT" = "$HEAD_SHA" ] || disarm "the approval this arm rests on is of ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, not of the current head $HEAD_SHA"
+              if [ -z "$REVIEWER_REVIEW_COMMIT" ] || [ "$REVIEWER_REVIEW_COMMIT" != "$HEAD_SHA" ]; then
+                disarm "the approval this arm rests on is of ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, not of the current head $HEAD_SHA"
+              fi
               [ "$UNRESOLVED_THREADS" = "0" ] || disarm "under the approval, $UNRESOLVED_THREADS unresolved review thread(s)"
               [ "$MERGE_STATE" != "BEHIND" ] || [ "$MERGE_QUEUE" = "true" ] || update_branch=true
               skip "auto-merge is already enabled, by $AUTO_MERGE_ENABLED_BY (this App), and its conditions still hold"
@@ -446,7 +448,9 @@ jobs:
             "") skip "no $REVIEWER review yet; this runs again when its review is submitted" ;;
             *) skip "the latest $REVIEWER review is $REVIEWER_REVIEW, not APPROVED; a human or agent decides" ;;
           esac
-          [ -n "$REVIEWER_REVIEW_COMMIT" ] && [ "$REVIEWER_REVIEW_COMMIT" = "$HEAD_SHA" ] || skip "approved at ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, but the head is now $HEAD_SHA; this runs again when $REVIEWER reviews this head"
+          if [ -z "$REVIEWER_REVIEW_COMMIT" ] || [ "$REVIEWER_REVIEW_COMMIT" != "$HEAD_SHA" ]; then
+            skip "approved at ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, but the head is now $HEAD_SHA; this runs again when $REVIEWER reviews this head"
+          fi
           case "$REVIEW_DECISION" in
             APPROVED|"") ;;
             *) skip "the pull request's review decision is $REVIEW_DECISION" ;;
