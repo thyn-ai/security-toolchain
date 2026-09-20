@@ -1,0 +1,8 @@
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  # thyn-security-toolchain:begin
+  - repo: https://github.com/thyn-ai/security-toolchain
+    rev: v0.1.12
+    hooks:
+      - id: gitleaks-staged
+  # thyn-security-toolchain:end

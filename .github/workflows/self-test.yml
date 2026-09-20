@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install --quiet --disable-pip-version-check -e ".[dev]" ruff
+      # Hash-pinned dev tools (pytest, pyyaml, ruff), then the package itself without
+      # dependencies -- it has none. requirements-dev.txt says how to regenerate the pins.
+      - run: python -m pip install --quiet --disable-pip-version-check --require-hashes -r requirements-dev.txt
+      - run: python -m pip install --quiet --disable-pip-version-check --no-deps -e .
       - run: ruff check .
       - run: ruff format --check .
       - run: python -m pytest -q -m "not integration"
@@ -46,7 +49,8 @@ jobs:
           persist-credentials: false
       - name: Set up thyn-sec from this checkout
         uses: ./
-      - run: python -m pip install --quiet --disable-pip-version-check -e ".[dev]"
+      - run: python -m pip install --quiet --disable-pip-version-check --require-hashes -r requirements-dev.txt
+      - run: python -m pip install --quiet --disable-pip-version-check --no-deps -e .
       - run: python -m pytest -q -m integration
       - name: The toolchain repo passes its own smoke gate
         run: thyn-sec ci --tools gitleaks,opengrep,trivy --overlay python-uv --mode ratchet --changed ALL --out-dir "$RUNNER_TEMP/self"
@@ -74,3 +78,45 @@ jobs:
           case "$(command -v python || true)" in *thyn-sec-venv*) echo '::error::python resolves into the thyn-sec venv'; exit 1;; esac
           python3 -c 'import sys; print("caller python:", sys.executable)'
       - run: thyn-sec actionlint .github/workflows/*.yml
+
+  fuzz:
+    # Bounded coverage-guided fuzzing of every parser (fuzz/README.md): the lock validator, the
+    # overlay resolver, the changed-file reader, the four report parsers and the pin readers.
+    # Each harness runs for a fixed time against its committed corpus; a crash, a property
+    # violation or an input slower than the timeout fails the job and is uploaded for replay.
+    name: fuzz the parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --quiet --disable-pip-version-check --require-hashes -r requirements-fuzz.txt
+      - run: python -m pip install --quiet --disable-pip-version-check --no-deps -e .
+      - name: Run every harness for 60 s
+        # libFuzzer writes the inputs it discovers into the first corpus directory it is given,
+        # so that one is a scratch directory and the committed seeds are the read-only second.
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fuzz-artifacts"
+          for harness in fuzz/fuzz_*.py; do
+            name="$(basename "$harness" .py)"
+            corpus="fuzz/corpus/${name#fuzz_}"
+            test -d "$corpus" || { echo "::error::$harness has no corpus at $corpus"; exit 1; }
+            mkdir -p "$RUNNER_TEMP/fuzz-work/$name"
+            echo "::group::$name"
+            python "$harness" "$RUNNER_TEMP/fuzz-work/$name" "$corpus" \
+              -max_total_time=60 -timeout=25 -rss_limit_mb=2048 \
+              -artifact_prefix="$RUNNER_TEMP/fuzz-artifacts/$name-"
+            echo "::endgroup::"
+          done
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-artifacts
+          path: ${{ runner.temp }}/fuzz-artifacts/
+          if-no-files-found: ignore

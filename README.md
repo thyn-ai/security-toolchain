@@ -1,5 +1,9 @@
 # thyn-ai security toolchain
 
+[![self-test](https://github.com/thyn-ai/security-toolchain/actions/workflows/self-test.yml/badge.svg)](https://github.com/thyn-ai/security-toolchain/actions/workflows/self-test.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/thyn-ai/security-toolchain/badge)](https://scorecard.dev/viewer/?uri=github.com/thyn-ai/security-toolchain)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
+
 One pinned, checksum-verified set of open-source scanners, run the same way on a
 developer's machine and on a clean CI checkout:
 
@@ -172,10 +176,21 @@ to a third party; OSV-Scanner queries the public OSV API with package coordinate
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]" ruff
-pytest -m "not integration"     # fast
+pip install --require-hashes -r requirements-dev.txt   # pytest, pyyaml, ruff -- the CI pins
+pip install --no-deps -e .                              # the package has no dependencies
+pytest -m "not integration"     # fast; also replays the fuzz corpora through every harness
 pytest -m integration           # downloads the pinned scanners, proves one-owner-per-fixture
 ```
+
+`pip install -e ".[dev]" ruff` works too when the exact CI versions do not matter.
+`requirements-dev.txt` carries the hashes CI installs with and says how to regenerate them.
+
+The parsers are fuzzed with [atheris](https://github.com/google/atheris) on every push
+(`fuzz/README.md`): the lock validator, the overlay resolver, the changed-file reader, the
+four report parsers and the pin readers each have a harness under `fuzz/` with the property
+it enforces, and a bounded run of all of them is a job in `self-test.yml`. Posture is tracked
+by [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/thyn-ai/security-toolchain)
+(`scorecard.yml`, weekly and on every push to `main`).
 
 Releasing: bump `version` in `pyproject.toml` and `__init__.py`, bump the
 `thyn-ai/security-toolchain@vX.Y.Z` reference in both reusable workflows, tag `vX.Y.Z`,

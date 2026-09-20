@@ -67,6 +67,57 @@ def test_opengrep_key_is_line_independent(tmp_path: Path):
     assert fa[0].severity == "HIGH" and fa[0].blocking
 
 
+def test_norm_ws_is_idempotent_at_the_truncation_boundary():
+    """A snippet cut exactly after a word left a trailing space in the key; read_baseline
+    rstrips every line, so that key could never match its own baseline entry."""
+    from thyn_security_toolchain.gate import _norm_ws
+
+    text = "a" * 99 + " b"
+    once = _norm_ws(text)
+    assert once == "a" * 99
+    assert _norm_ws(once) == once
+    assert _norm_ws("  x   y  ", 300) == "x y"
+
+
+def test_a_key_never_carries_surrounding_whitespace(tmp_path: Path):
+    """No snippet (opengrep) and a blank advisory id (osv) used to leave a trailing space."""
+    p = tmp_path / "a.sarif"
+    p.write_text(
+        json.dumps(_sarif([{"ruleId": "r", "level": "error", "locations": _loc("app/x.py", 3)}]))
+    )
+    (f,) = parse_opengrep_sarif(p)
+    assert f.key == "r :: app/x.py ::"
+    o = tmp_path / "osv.json"
+    o.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "source": {"path": "uv.lock"},
+                        "packages": [
+                            {
+                                "package": {"ecosystem": "PyPI", "name": "x", "version": "1"},
+                                "vulnerabilities": [{"id": " "}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    (g,) = parse_osv_json(o)
+    assert g.key == "PyPI/x@1 :: UNKNOWN"
+    for finding in (f, g):
+        assert finding.key == finding.key.strip()
+        assert finding.key in read_baseline(_baseline_with(tmp_path, finding.key))
+
+
+def _baseline_with(tmp_path: Path, key: str) -> Path:
+    b = tmp_path / "baseline.txt"
+    b.write_text(render_baseline("t", "1", [key], "c" * 40, "https://example.invalid/run"))
+    return b
+
+
 def test_opengrep_rule_id_prefix_is_stripped():
     raw = (
         "home.runner..cache.thyn-sec.rules.opengrep-rules-f1d2b562b414."

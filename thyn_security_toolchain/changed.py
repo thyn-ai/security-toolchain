@@ -35,6 +35,7 @@ ALL = "ALL"
 Changed = Union[str, list[str]]  # ALL or a concrete list
 
 ZERO_SHA = "0" * 40
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # Files whose change means "dependencies may have changed" -> run OSV.
 MANIFEST_RE = re.compile(
@@ -109,8 +110,7 @@ def from_env() -> Changed | None:
     if not p.is_file():
         _log(f"THYN_SEC_CHANGED_FILES={spec!r} is not a file; widening to ALL")
         return ALL
-    files = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    return files
+    return _lines(p.read_text(encoding="utf-8"))
 
 
 def _api_pr_files(repo: str, number: int, token: str, server: str) -> list[str] | None:
@@ -157,6 +157,12 @@ def _api_pr_files(repo: str, number: int, token: str, server: str) -> list[str] 
 
 
 def _git_diff(base: str, head: str, cwd: str | None = None) -> list[str] | None:
+    if not (_SHA_RE.match(base) and _SHA_RE.match(head)):
+        # Every event field that reaches here is a full commit SHA. Anything else is refused
+        # before it becomes a git argument: a value starting with ``-`` would be read as an
+        # option, and the fail-closed answer for an undecidable diff is a full scan anyway.
+        _log(f"refusing git diff on non-SHA revisions {base!r}...{head!r}")
+        return None
     try:
         out = subprocess.run(
             ["git", "diff", "--name-only", "--diff-filter=ACMRTUXB", f"{base}...{head}"],
@@ -171,6 +177,16 @@ def _git_diff(base: str, head: str, cwd: str | None = None) -> list[str] | None:
     return [ln.strip() for ln in out.splitlines() if ln.strip()]
 
 
+def _mapping(value: object) -> dict:
+    """*value* when it is a JSON object, else an empty one (a missing field reads the same)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _text(value: object) -> str:
+    """*value* when it is a string, else empty (a field of the wrong type is a missing field)."""
+    return value if isinstance(value, str) else ""
+
+
 def _pushed_default_branch(event: dict) -> str | None:
     """Name of the default branch when the pushed ref *is* that branch, else None.
 
@@ -179,10 +195,10 @@ def _pushed_default_branch(event: dict) -> str | None:
     the short name is available, from ``GITHUB_REF_NAME``. A tag that happens to share
     the default branch's name (``GITHUB_REF_TYPE=tag``) does not count.
     """
-    default = ((event.get("repository") or {}).get("default_branch") or "").strip()
+    default = _text(_mapping(event.get("repository")).get("default_branch")).strip()
     if not default:
         return None
-    ref = os.environ.get("GITHUB_REF") or event.get("ref") or ""
+    ref = os.environ.get("GITHUB_REF") or _text(event.get("ref"))
     if ref == f"refs/heads/{default}":
         return default
     if ref:
@@ -202,17 +218,20 @@ def from_github_event() -> Changed | None:
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     except ValueError:
         return ALL
+    if not isinstance(event, dict):
+        return ALL  # a payload that is not an object cannot name a diff; fail closed
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     if event_name in ("pull_request", "pull_request_target"):
-        number = (event.get("pull_request") or {}).get("number") or event.get("number")
+        pull = _mapping(event.get("pull_request"))
+        number = pull.get("number") or event.get("number")
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        if number and token and repo:
-            files = _api_pr_files(repo, int(number), token, server)
+        if isinstance(number, int) and number > 0 and token and repo:
+            files = _api_pr_files(repo, number, token, server)
             if files is not None:
                 return sorted(set(files))
-        base = (event.get("pull_request") or {}).get("base", {}).get("sha")
-        head = (event.get("pull_request") or {}).get("head", {}).get("sha")
+        base = _text(_mapping(pull.get("base")).get("sha"))
+        head = _text(_mapping(pull.get("head")).get("sha"))
         if base and head:
             files = _git_diff(base, head)
             if files is not None:
@@ -227,7 +246,7 @@ def from_github_event() -> Changed | None:
                 "code-scanning alert set for the ref is never narrowed by a partial upload"
             )
             return ALL
-        before, after = event.get("before"), event.get("after")
+        before, after = _text(event.get("before")), _text(event.get("after"))
         if not before or before == ZERO_SHA or not after:
             _log("push without a usable before/after pair (new branch?); widening to ALL")
             return ALL
@@ -275,9 +294,18 @@ def write_list(changed: Changed, dest: Path) -> None:
     dest.write_text(ALL + "\n" if is_all(changed) else "\n".join(changed) + "\n", encoding="utf-8")
 
 
+def _lines(text: str) -> list[str]:
+    """The entries of a newline-separated list file: one path per line, blank lines dropped.
+
+    Split on ``\\n`` only. ``str.splitlines`` would also split on form feed, the ASCII
+    separators and the Unicode line/paragraph separators, all of which are legal inside a
+    file name, so a path :func:`write_list` wrote as one line would read back as two.
+    """
+    return [ln.strip() for ln in text.split("\n") if ln.strip()]
+
+
 def read_list(src: str | Path) -> Changed:
-    text = Path(src).read_text(encoding="utf-8")
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    lines = _lines(Path(src).read_text(encoding="utf-8"))
     if len(lines) == 1 and lines[0].upper() == ALL:
         return ALL
     return lines

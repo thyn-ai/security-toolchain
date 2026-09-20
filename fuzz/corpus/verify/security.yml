@@ -1,0 +1,5 @@
+jobs:
+  full:
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@b71521eb3933b7b30580dbd748c77ce96806e239 # v0.1.12
+    permissions:
+      contents: read
