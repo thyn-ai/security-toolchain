@@ -44,6 +44,9 @@ RETURN = "Return the toolchain source for the action's post steps"
 # the literal self-reference this file exists to keep out.
 _SELF_REF_RE = re.compile(r"^\s*-?\s*uses:\s*thyn-ai/security-toolchain(?:/\S*)?@", re.M)
 _PINNED_USES_RE = re.compile(r"^\s*-?\s*uses:\s*\S+@[0-9a-f]{40}\s+#\s*v\d+\.\d+\.\d+\s*$")
+# The words CodeQL's untrusted-checkout heuristics read as "this is a pull-request head":
+# `.*(head|sha|commit).*` (SHA checkout) and `.*(head|branch|ref).*` (mutable-ref checkout).
+_CODEQL_HEAD_NAME_RE = re.compile(r"head|sha|commit|branch|ref")
 _USES_LINE_RE = re.compile(r"^\s*-?\s*uses:")
 
 
@@ -85,9 +88,6 @@ def test_the_workflow_locates_its_own_commit_and_installs_exactly_that(workflow:
     assert "jq -r '.workflow_repository // empty'" in run
     assert "^[0-9a-f]{40}$" in run, "a value that is not a full commit sha must be refused"
     assert "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" in run, "and so must one that is not owner/repo"
-    # a checkout `ref` field named sha/head/commit/ref is a pull-request head to CodeQL's
-    # untrusted-checkout heuristic, by name alone; the located commit is a revision
-    assert "steps.self.outputs.sha" not in run
     assert "::error title=thyn-sec::" in run and "exit 1" in run
     assert 'echo "revision=$revision" >> "$GITHUB_OUTPUT"' in run
     assert 'echo "repository=$repository" >> "$GITHUB_OUTPUT"' in run
@@ -138,6 +138,38 @@ def test_the_workflow_locates_its_own_commit_and_installs_exactly_that(workflow:
         if "thyn-sec ci" in (s.get("run") or "") or "thyn-sec changed-files" in (s.get("run") or "")
     ]
     assert scans and min(scans) > _index(steps, name=PARK)
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_the_checkout_ref_stays_outside_codeqls_untrusted_head_heuristic(workflow: str):
+    """A checkout `ref:` naming a step output whose name contains head/sha/commit (or
+    head/branch/ref) is a pull-request head checkout to CodeQL's untrusted-checkout queries --
+    by the name alone, with no dataflow from an event payload
+    (`ActionsSHACheckout` / `ActionsMutableRefCheckout` in `UntrustedCheckoutQuery.qll`). Naming
+    this output `sha` cost a high `actions/cache-poisoning` alert on the pull request that
+    introduced it; `revision` says the same thing and is outside the guess.
+
+    Checked on the YAML, which is where such an expression can appear at all: the same words in
+    the locate step's shell script are the job-context field names being read, not a checkout
+    argument, and are unaffected.
+    """
+    text, steps = _load(workflow)
+    checkouts = [
+        s
+        for s in steps
+        if s.get("uses", "").startswith(CHECKOUT_ACTION) and (s.get("with") or {}).get("ref")
+    ]
+    assert len(checkouts) == 1, "one checkout takes a ref: the toolchain at its own commit"
+    for step in checkouts:
+        ref = str(step["with"]["ref"])
+        m = re.fullmatch(r"\$\{\{\s*steps\.(?P<id>[\w-]+)\.outputs\.(?P<field>[\w-]+)\s*\}\}", ref)
+        assert m, f"checkout ref {ref!r} is not a plain step output of this job"
+        for part, value in (("step id", m.group("id")), ("output name", m.group("field"))):
+            assert not _CODEQL_HEAD_NAME_RE.search(value), (
+                f"{workflow}: checkout ref {part} {value!r} contains a word CodeQL reads as a "
+                "pull-request head (head/sha/commit/branch/ref); rename it"
+            )
+    assert "outputs.sha" not in text, "the sha -> revision rename must not regress anywhere"
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)
