@@ -1,20 +1,22 @@
 # Dependabot pull requests land on their own. Called from a fleet repository's
 # `dependabot-auto-merge.yml` (templates/dependabot-auto-merge.yml, rendered by propagate.py),
-# this job enables GitHub auto-merge on a Dependabot pull request once the codna review has
+# this workflow enables GitHub auto-merge on a Dependabot pull request once the codna review has
 # approved it -- and GitHub then completes the merge only when every ruleset requirement on the
 # base branch is met: the `codna review` status check and the repository's required checks.
 # Auto-merge never bypasses a rule and this workflow adds none: a repository whose default branch
 # does not require `codna review` must not adopt the caller (fleet.json / the template say so),
 # because there auto-merge would complete on green CI alone.
 #
-# Two events reach it, both carrying the pull request: `pull_request_target` (opened,
-# synchronize, reopened -- Dependabot's own pushes) and `pull_request_review` (submitted -- the
-# codna review landing, minutes after the push). The caller's `if:` lets a review event through
-# only when the reviewer is the reviewing App and the state is `approved`, so nobody but
-# Dependabot and codna can start this secret-bearing job (any account can review a public
-# repository's pull request); the Decide step holds the same rule for a caller that forgets.
-# Each run re-reads the facts and decides from scratch; the decision needs the review, which
-# does not exist yet when the pull request opens.
+# Three events reach it. Two carry the pull request and run the `enable` job: `pull_request_target`
+# (opened, synchronize, reopened -- Dependabot's own pushes, and any other push to the head branch)
+# and `pull_request_review` (submitted -- a codna review landing, minutes after the push, in any
+# state: the job decides what an approval, a comment or a change request means for the pull
+# request's auto-merge). The caller's `if:` lets a review event through only when the reviewer is
+# the reviewing App, so nobody but Dependabot and codna can start this secret-bearing job (any
+# account can review a public repository's pull request); the Decide step holds the same rule for a
+# caller that forgets. Each run re-reads the facts and decides from scratch; the decision needs the
+# review, which does not exist yet when the pull request opens. The third event is a `push` to the
+# default branch, which carries no pull request and runs the `sweep` job instead ("Merge state").
 # There is no trigger for a review thread being resolved (the pinned actionlint, 1.7.12, does not
 # know `pull_request_review_thread`, and the fleet's pre-commit hook lints every caller): a pull
 # request codna left findings on is the human's from there -- resolve them and merge it, or
@@ -26,9 +28,22 @@
 # review; a neutral conclusion satisfies a required status check, so with
 # `required_review_thread_resolution` on, the unresolved thread is what blocks the merge -- an
 # auto-merge enabled on that pull request would wait forever. Hence: enable only when codna's
-# latest review is APPROVED, the review decision is not against it, and there are zero unresolved
-# review threads. Findings are never resolved here; a pull request codna did not approve, or left
-# findings on, stays for a human or agent (the run summary says so).
+# latest review is APPROVED and was submitted against the current head, the review decision is
+# not against it, and there are zero unresolved review threads. Findings are never resolved here;
+# a pull request codna did not approve, or left findings on, stays for a human or agent (the run
+# summary says so).
+#
+# An arm is good for one head. GitHub keeps an enabled auto-merge across pushes to the head
+# branch, and it keeps an approving review whose diff a rebase did not change, so a pull request
+# armed on head A stays armed -- with reviewDecision APPROVED -- after Dependabot rebases it to
+# head B, and a finding codna then posts on head B (a COMMENTED review, an unresolved thread) does
+# not stop the merge the moment the checks pass (thyn-ai/algenta-integrations #150, 2026-09-20).
+# So the job disarms what it armed: on `synchronize` (a new head, whoever pushed it) an auto-merge
+# this App enabled is disabled again and the pull request waits for codna's review of that head;
+# on a codna review that is not an approval, an approval of another commit, or unresolved
+# threads, likewise. The enable path re-arms it when codna's latest review, on the current head,
+# is APPROVED with zero unresolved threads. An auto-merge a human enabled is never touched, in
+# either direction (`autoMergeRequest.enabledBy`, matched against `app_slug`).
 #
 # The merge is enabled with an installation token of the org's `algenta-sdk-sync` GitHub App, not
 # with GITHUB_TOKEN, on purpose. GitHub, "Triggering a workflow from a workflow"
@@ -43,26 +58,56 @@
 #
 # Trust boundary. `pull_request_target` runs on the base branch with the repository's secrets,
 # and the review event runs for a same-repository head with them too, so nothing from the pull
-# request may execute here: there is no checkout, no local action, and no pull-request
-# free-text reaches a shell -- the job reads the update type Dependabot signed into its commit
-# (dependabot/fetch-metadata, which refuses a pull request whose author or commits are not
-# Dependabot's, or whose signatures do not verify) and calls the API. The App token exists in one
-# step's environment and the private key reaches one action's input; the default token stays
-# read-only. A head branch in another repository is skipped.
+# request may execute here: there is no checkout, no local action, and no pull-request free-text
+# reaches a shell as code -- the job reads the update type Dependabot signed into its commit
+# (dependabot/fetch-metadata, which refuses a pull request whose author or first commit are not
+# Dependabot's, or whose signature does not verify) and calls the API. The one free-text field it
+# reads, the pull request title, enters the Decide step through `env:`, is matched against a fixed
+# grammar ("Update type" below) and is never executed; only tokens that pass the range grammar
+# are echoed back. The App token exists in a step's environment and the private key reaches one
+# action's input per job; the default token stays read-only. A head branch in another repository
+# is skipped.
+#
+# Update type. dependabot/fetch-metadata reports `update-type` from the versions it parses out of
+# the commit message or, for a requirement (range) update, out of the pull request title
+# (`Update <pkg> requirement from <old range> to <new range>`) with a regex that strips only the
+# first specifier's operator: a range written upper-bound-first -- Dependabot's own format,
+# `<2,>=1.29.0` -- is read as version `2,>=1.29.0` and compared with the new floor, 1.30.0: a
+# semver-major (thyn-ai/algenta-integrations #153, 2026-09-20, where the mcp floor moved from
+# 1.29.0 to 1.30.0 under an unchanged `<2`). For a title of that form the Decide step derives the
+# type itself from the two ranges' lower bounds (`>=X`, `~=X` or `==X`; exactly one per range,
+# all-numeric dotted): the first differing component says major, minor or patch. When the other
+# specifiers (an upper bound, an exclusion) changed too, or either range has no such lower bound,
+# the change is unclassified and stays open with a notice. fetch-metadata's type is trusted only
+# for the other title forms (`Bump <pkg> from X to Y`, grouped updates).
 #
 # What is skipped, each with a `::notice` and a step summary: a pull request not opened by
-# dependabot[bot]; a `pull_request_target` event not triggered by dependabot[bot]; a draft; a
-# repository with "Allow auto-merge" off; a pull request that already has auto-merge enabled (a
-# human's decision is never overridden, in either direction); a semver-major update unless the
-# caller opts in with `auto_merge_majors: true`; an update Dependabot could not classify (a
-# requirement-range change has no update-type); no codna review yet, a codna review that is not
-# APPROVED, a review decision against it, or unresolved review threads.
+# dependabot[bot]; a `pull_request_target` event not triggered by dependabot[bot]; a review event
+# that is not codna's approval; a head branch in another repository; a draft; a repository with
+# "Allow auto-merge" off; a pull request whose auto-merge a human (or another App) enabled, in
+# either direction; a semver-major update unless the caller opts in with `auto_merge_majors:
+# true`; an update neither Dependabot nor the title classifies; no codna review yet, a codna
+# review that is not APPROVED or not of the current head, a review decision against it, or
+# unresolved review threads.
 #
 # Merge state. A ruleset with "require branches to be up to date" (strict required status checks)
-# turns every other open Dependabot pull request BEHIND on each merge, and Dependabot was observed
-# not rebasing them (thyn-ai/cohenta, 2026-09-20), so the enabled auto-merge would never fire.
-# Auto-merge is still enabled here for a BEHIND pull request -- it completes on the next rebase --
-# but the fleet's rulesets were audited for that policy at rollout (fleet.json, README).
+# turns every other open Dependabot pull request BEHIND on each merge to the base branch, and
+# GitHub's auto-merge never updates a branch: an armed pull request then waits forever
+# (thyn-ai/algenta-integrations #150/#152/#154, 2026-09-20 -- armed at 09:05Z, BEHIND after the
+# first sibling merged, moved only by a human's `@dependabot rebase`). Dependabot honours that
+# command from users with push access only; to a GitHub App it answers "Sorry, only users with
+# push access can use that command" (dependabot/dependabot-core#9147, open). So the job brings the
+# branch up to date itself, through GitHub's update-branch API with the App token (`gh pr
+# update-branch`: the mutation `updatePullRequestBranch`, guarded by the expected head, a no-op
+# when the branch is not behind). The update merges the base branch into the head rather than
+# rebasing: fetch-metadata verifies the pull request's first commit -- Dependabot's, signed -- and
+# a merge leaves that commit in place, where a server-side rebase rewrites it into a commit GitHub
+# does not sign. Two paths reach the update: the `enable` job, when it arms a BEHIND pull request
+# or finds one this App armed still holding its conditions; and the `sweep` job, on every push to
+# the default branch, for the pull requests that turned BEHIND without an event of their own --
+# the case above. A base branch with a merge queue is left to the queue, which updates for it
+# (algenta-sdk). The update is a new head, so the `enable` job then disarms and codna reviews that
+# head, as for any push.
 name: dependabot-auto-merge
 
 on:
@@ -84,6 +129,10 @@ on:
         description: "Numeric id of the GitHub App whose installation token enables auto-merge (a public number; default: thyn-ai's algenta-sdk-sync)"
         type: string
         default: "4614082"
+      app_slug:
+        description: "Slug of that same App (its bot login is <slug>[bot]): the auto-merge it enabled is the one this workflow may disarm or bring up to date; a human's is never touched"
+        type: string
+        default: algenta-sdk-sync
     secrets:
       app_private_key:
         description: "That App's private key (the org secret ALGENTA_SDK_SYNC_APP_PRIVATE_KEY)"
@@ -94,6 +143,8 @@ permissions: {}
 jobs:
   enable:
     name: dependabot auto-merge
+    # The two pull-request events; a push runs `sweep` below.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # One run per pull request at a time; a later event supersedes the run for the earlier state.
@@ -107,7 +158,7 @@ jobs:
       - name: Read the update type Dependabot signed into its commit
         # Runs only for a Dependabot-authored pull request: on any other author the action
         # would fail for want of metadata, where the decide step below explains the skip.
-        # It verifies that every commit is Dependabot's own and signed before it reports
+        # It verifies that the first commit is Dependabot's own and signed before it reports
         # anything; `update-type` is the highest semver change in the (grouped) update.
         id: metadata
         if: github.event.pull_request.user.login == 'dependabot[bot]'
@@ -117,8 +168,10 @@ jobs:
 
       - name: Read the repository setting, the pull request's merge state and its reviews
         # Read-only, with the default token: whether the repository allows auto-merge at all,
-        # whether this pull request already has it enabled (and by whom), the reviewer's latest
-        # review, the review decision and the count of unresolved review threads.
+        # whether the base branch has a merge queue, whether this pull request already has
+        # auto-merge enabled (and by whom), its head and merge state, the reviewer's latest review
+        # and the commit it was submitted against, the review decision and the count of unresolved
+        # review threads.
         #
         # The setting comes from GraphQL's `autoMergeAllowed`: REST's `allow_auto_merge` is
         # returned to admin and push tokens only and reads null to this read-only token, which
@@ -132,13 +185,24 @@ jobs:
         run: |
           set -euo pipefail
           setting_query="$(cat <<'GRAPHQL'
-            query($owner: String!, $name: String!) {
-              repository(owner: $owner, name: $name) { autoMergeAllowed }
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                autoMergeAllowed
+                pullRequest(number: $number) { isMergeQueueEnabled }
+              }
             }
           GRAPHQL
           )"
-          allow="$(gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -f query="$setting_query" --jq '.data.repository.autoMergeAllowed')"
-          pr="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,autoMergeRequest,mergeStateStatus,reviewDecision,reviews)"
+          setting="$(gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" -f query="$setting_query")"
+          allow="$(jq -r '.data.repository.autoMergeAllowed' <<<"$setting")"
+          queue="$(jq -r '.data.repository.pullRequest.isMergeQueueEnabled' <<<"$setting")"
+          # GitHub recomputes mergeability after a push and reports UNKNOWN meanwhile; a BEHIND
+          # read as UNKNOWN would go without its branch update, so the read is repeated a few times.
+          for attempt in 1 2 3 4; do
+            pr="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,autoMergeRequest,mergeStateStatus,reviewDecision,reviews,headRefOid)"
+            [ "$(jq -r '.mergeStateStatus' <<<"$pr")" = "UNKNOWN" ] || break
+            [ "$attempt" = "4" ] || sleep 5
+          done
           # Every review thread, across pages (`--paginate` follows pageInfo through $endCursor,
           # `--slurp` returns the pages as one array), so the count is exact however many threads
           # a pull request carries. gh refuses `--slurp` together with `--jq`, so the array goes
@@ -159,56 +223,88 @@ jobs:
           )"
           unresolved="$(gh api graphql --paginate --slurp -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" -f query="$query" \
             | jq '[.[].data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not)] | length')"
+          # the reviewer's LATEST review, matched with or without the [bot] suffix (jq reads the
+          # login from this step's environment)
+          latest='[.reviews[] | select(.author.login == env.REVIEWER or .author.login == (env.REVIEWER + "[bot]"))] | last'
           {
             echo "allow_auto_merge=$allow"
+            echo "merge_queue=$queue"
             echo "state=$(jq -r '.state | ascii_downcase' <<<"$pr")"
             echo "draft=$(jq -r '.isDraft' <<<"$pr")"
             echo "cross_repository=$(jq -r '.isCrossRepository' <<<"$pr")"
             echo "auto_merge_enabled_by=$(jq -r '.autoMergeRequest.enabledBy.login // empty' <<<"$pr")"
             echo "merge_state=$(jq -r '.mergeStateStatus' <<<"$pr")"
+            echo "head_sha=$(jq -r '.headRefOid' <<<"$pr")"
             echo "review_decision=$(jq -r '.reviewDecision // empty' <<<"$pr")"
-            echo "reviewer_review=$(jq -r --arg r "$REVIEWER" '[.reviews[] | select(.author.login == $r or .author.login == ($r + "[bot]"))] | last | .state // empty' <<<"$pr")"
+            echo "reviewer_review=$(jq -r "$latest | .state // empty" <<<"$pr")"
+            echo "reviewer_review_commit=$(jq -r "$latest | .commit.oid // empty" <<<"$pr")"
             echo "unresolved_threads=$unresolved"
           } >> "$GITHUB_OUTPUT"
 
       - name: Decide
         # A pure function of its environment (tests/test_dependabot_auto_merge.py runs this
-        # script against fixture cases): every skip is a `::notice` and a green step; only a
-        # miscalled workflow (an unexpected event, or an unknown merge method) is an error.
-        # Logins, review states and the update type are the only pull-request-derived values
-        # here; none is free text, and each is compared, never executed.
+        # script against fixture cases): every skip and every disarm is a `::notice` and a green
+        # step; only a miscalled workflow (an unexpected event, or an unknown merge method) is an
+        # error. Logins, review states, commit ids, the merge state, the update type and the pull
+        # request title are the only pull-request-derived values here; each is compared or
+        # matched, never executed, and the title is echoed only in tokens that pass the range
+        # grammar.
         id: decide
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           ACTOR: ${{ github.actor }}
           REVIEW_AUTHOR: ${{ github.event.review.user.login }}
           REVIEW_STATE: ${{ github.event.review.state }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
           PR_STATE: ${{ steps.facts.outputs.state }}
           PR_DRAFT: ${{ steps.facts.outputs.draft }}
           CROSS_REPOSITORY: ${{ steps.facts.outputs.cross_repository }}
           ALLOW_AUTO_MERGE: ${{ steps.facts.outputs.allow_auto_merge }}
           AUTO_MERGE_ENABLED_BY: ${{ steps.facts.outputs.auto_merge_enabled_by }}
+          MERGE_STATE: ${{ steps.facts.outputs.merge_state }}
+          MERGE_QUEUE: ${{ steps.facts.outputs.merge_queue }}
+          HEAD_SHA: ${{ steps.facts.outputs.head_sha }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           AUTO_MERGE_MAJORS: ${{ inputs.auto_merge_majors }}
           MERGE_METHOD: ${{ inputs.merge_method }}
           REVIEWER: ${{ inputs.reviewer }}
+          APP_SLUG: ${{ inputs.app_slug }}
           REVIEWER_REVIEW: ${{ steps.facts.outputs.reviewer_review }}
+          REVIEWER_REVIEW_COMMIT: ${{ steps.facts.outputs.reviewer_review_commit }}
           REVIEW_DECISION: ${{ steps.facts.outputs.review_decision }}
           UNRESOLVED_THREADS: ${{ steps.facts.outputs.unresolved_threads }}
         run: |
           set -euo pipefail
+          update_type="$UPDATE_TYPE"
+          basis="reported by dependabot/fetch-metadata"
+          update_branch=false
+          # every output is written in the multiline-safe `name<<DELIM` form with a random
+          # delimiter (as GitHub's docs prescribe): the values embed strings read from the API,
+          # the metadata action and the title, and none may end a block early or start a second
+          # bogus output
+          out() {
+            local delim
+            delim="${1}_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+            printf '%s<<%s\n%s\n%s\n' "$1" "$delim" "$2" "$delim" >> "$GITHUB_OUTPUT"
+          }
+          finish() {
+            out decision "$1"
+            out reason "$2"
+            out update_type "$update_type"
+            out update_type_basis "$basis"
+            out update_branch "$update_branch"
+          }
           skip() {
             echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: not enabling auto-merge -- $1"
-            # the reason embeds values read from the API and the metadata action, so it is
-            # written in the multiline-safe `name<<DELIM` form rather than `name=value`, with a
-            # random delimiter (as GitHub's docs prescribe) so no value can end it early
-            delim="reason_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-            {
-              echo "decision=skip"
-              printf 'reason<<%s\n%s\n%s\n' "$delim" "$1" "$delim"
-            } >> "$GITHUB_OUTPUT"
+            finish skip "$1"
+            exit 0
+          }
+          disarm() {
+            echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: disarming -- $1"
+            finish disarm "$1"
             exit 0
           }
           refuse() {
@@ -217,56 +313,156 @@ jobs:
           }
           case "$EVENT_NAME" in
             pull_request_target|pull_request_review) ;;
-            *) refuse "this workflow enables auto-merge with the repository's secrets and must be called on pull_request_target or pull_request_review (got '$EVENT_NAME'); use templates/dependabot-auto-merge.yml" ;;
+            *) refuse "this job enables auto-merge with the repository's secrets and runs on pull_request_target or pull_request_review only (got '$EVENT_NAME'; a push runs the sweep job); use templates/dependabot-auto-merge.yml" ;;
           esac
           case "$MERGE_METHOD" in
             squash|merge|rebase) ;;
             *) refuse "merge_method must be squash, merge or rebase (got '$MERGE_METHOD')" ;;
           esac
           [ "$PR_AUTHOR" = "dependabot[bot]" ] || skip "opened by $PR_AUTHOR, not dependabot[bot]"
+          [ "$CROSS_REPOSITORY" != "true" ] || skip "the head branch is in another repository"
+          [ "$PR_STATE" = "open" ] || skip "the pull request is $PR_STATE"
+          [ "$PR_DRAFT" != "true" ] || skip "the pull request is a draft"
+
+          # --- an auto-merge already enabled --------------------------------------------------
+          # This App's own arm is good for the head codna approved: a new head (whoever pushed
+          # it), or a codna review that is not an approval of that head, or an unresolved thread,
+          # disarms it; while its conditions hold, a BEHIND pull request is brought up to date.
+          # gh renders a Bot's login as `app/<slug>`; the `<slug>[bot]` form is accepted too.
+          # A human's (or another App's) auto-merge is never touched.
+          case "$AUTO_MERGE_ENABLED_BY" in
+            "") ;;
+            "app/${APP_SLUG}"|"${APP_SLUG}[bot]")
+              if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$EVENT_ACTION" = "synchronize" ]; then
+                disarm "new head $HEAD_SHA, waiting for $REVIEWER on this head (pushed by $ACTOR)"
+              fi
+              [ "$REVIEWER_REVIEW" = "APPROVED" ] || disarm "the latest $REVIEWER review is ${REVIEWER_REVIEW:-missing}, not APPROVED"
+              [ -n "$REVIEWER_REVIEW_COMMIT" ] && [ "$REVIEWER_REVIEW_COMMIT" = "$HEAD_SHA" ] || disarm "the approval this arm rests on is of ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, not of the current head $HEAD_SHA"
+              [ "$UNRESOLVED_THREADS" = "0" ] || disarm "under the approval, $UNRESOLVED_THREADS unresolved review thread(s)"
+              [ "$MERGE_STATE" != "BEHIND" ] || [ "$MERGE_QUEUE" = "true" ] || update_branch=true
+              skip "auto-merge is already enabled, by $AUTO_MERGE_ENABLED_BY (this App), and its conditions still hold"
+              ;;
+            *) skip "auto-merge is already enabled, by $AUTO_MERGE_ENABLED_BY; a human's decision is never overridden" ;;
+          esac
+
           if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$ACTOR" != "dependabot[bot]" ]; then
             skip "this pull_request_target event was triggered by $ACTOR, not dependabot[bot]"
           fi
           if [ "$EVENT_NAME" = "pull_request_review" ]; then
             case "$REVIEW_AUTHOR" in
               "$REVIEWER"|"${REVIEWER}[bot]") ;;
-              *) skip "this review was submitted by $REVIEW_AUTHOR, not $REVIEWER; only its approval starts this job" ;;
+              *) skip "this review was submitted by $REVIEW_AUTHOR, not $REVIEWER; only its reviews start this job" ;;
             esac
             [ "$REVIEW_STATE" = "approved" ] || skip "this $REVIEWER review is '$REVIEW_STATE', not an approval"
           fi
-          [ "$CROSS_REPOSITORY" != "true" ] || skip "the head branch is in another repository"
-          [ "$PR_STATE" = "open" ] || skip "the pull request is $PR_STATE"
-          [ "$PR_DRAFT" != "true" ] || skip "the pull request is a draft"
           [ "$ALLOW_AUTO_MERGE" = "true" ] || skip "the repository setting 'Allow auto-merge' is off"
-          [ -z "$AUTO_MERGE_ENABLED_BY" ] || skip "auto-merge is already enabled, by $AUTO_MERGE_ENABLED_BY"
-          case "$UPDATE_TYPE" in
+
+          # --- the update type ----------------------------------------------------------------
+          # A requirement update is classified from the lower bounds of the two pip ranges in
+          # its title ("Update type" in the header); everything else takes fetch-metadata's type.
+          requirement_any_re='(^|[^[:alnum:]_])[Uu]pdate .* requirement from '
+          requirement_re='^(.* )?[Uu]pdate [^ ]+ requirement from ([^ ]+) to ([^ ]+)( in [^ ]+)?$'
+          range_token_re='^[0-9A-Za-z.,<>=~!*+_-]+$'
+          numeric_re='^[0-9]+(\.[0-9]+)*$'
+          # a title token, echoed only when it is made of range characters
+          show() {
+            if [[ $1 =~ $range_token_re ]]; then printf '%s' "$1"; else printf '(unprintable)'; fi
+          }
+          # "<lower version>|<other specifiers, sorted>" for a range with exactly one all-numeric
+          # lower bound (>=X, ~=X or ==X); fails for any other shape
+          bounds() {
+            local spec lower="" others="" rest="$1,"
+            while [ -n "$rest" ]; do
+              spec="${rest%%,*}"
+              rest="${rest#*,}"
+              case "$spec" in
+                "==="*) return 1 ;;
+                ">="*|"~="*|"=="*)
+                  [ -z "$lower" ] || return 1
+                  lower="${spec#??}"
+                  [[ $lower =~ $numeric_re ]] || return 1
+                  ;;
+                "<="*|"<"*|">"*|"!="*) others="${others}${spec}"$'\n' ;;
+                *) return 1 ;;
+              esac
+            done
+            [ -n "$lower" ] || return 1
+            printf '%s|%s\n' "$lower" "$(printf '%s' "$others" | sort | tr '\n' ',')"
+          }
+          # major | minor | patch | same, by the first differing component of two all-numeric
+          # dotted versions (a missing component reads 0: 3 -> 3.4.7 is minor)
+          semver_class() {
+            local old="$1." new="$2." i=0 a b
+            while [ -n "$old" ] || [ -n "$new" ]; do
+              a=0
+              b=0
+              if [ -n "$old" ]; then a="${old%%.*}"; old="${old#*.}"; fi
+              if [ -n "$new" ]; then b="${new%%.*}"; new="${new#*.}"; fi
+              if [ "$((10#$a))" -ne "$((10#$b))" ]; then
+                case "$i" in 0) echo major ;; 1) echo minor ;; *) echo patch ;; esac
+                return 0
+              fi
+              i=$((i + 1))
+            done
+            echo same
+          }
+          if [[ $PR_TITLE =~ $requirement_any_re ]]; then
+            update_type=""
+            basis="a requirement update; its title is not in Dependabot's form"
+            if ! [[ $PR_TITLE =~ $requirement_re ]]; then
+              skip "the title is a requirement update but not of the form 'Update <pkg> requirement from <range> to <range>'; a human decides"
+            fi
+            old_range="${BASH_REMATCH[2]}"
+            new_range="${BASH_REMATCH[3]}"
+            shown="$(show "$old_range") -> $(show "$new_range")"
+            basis="derived from the lower bounds of the requirement update $shown"
+            old_b="$(bounds "$old_range")" || skip "no single numeric lower bound (>=X, ~=X or ==X) in the old range of the requirement update $shown; a human decides"
+            new_b="$(bounds "$new_range")" || skip "no single numeric lower bound (>=X, ~=X or ==X) in the new range of the requirement update $shown; a human decides"
+            if [ "${old_b#*|}" != "${new_b#*|}" ]; then
+              skip "more than the lower bound moved in the requirement update $shown (an upper bound or an exclusion changed); a human decides"
+            fi
+            case "$(semver_class "${old_b%%|*}" "${new_b%%|*}")" in
+              major) update_type="version-update:semver-major" ;;
+              minor) update_type="version-update:semver-minor" ;;
+              patch) update_type="version-update:semver-patch" ;;
+              *) skip "the lower bound does not move in the requirement update $shown; a human decides" ;;
+            esac
+            if [ -n "$UPDATE_TYPE" ] && [ "$UPDATE_TYPE" != "$update_type" ]; then
+              basis="$basis (dependabot/fetch-metadata reported $UPDATE_TYPE)"
+            fi
+          fi
+          case "$update_type" in
             version-update:semver-minor|version-update:semver-patch) ;;
             version-update:semver-major)
-              [ "$AUTO_MERGE_MAJORS" = "true" ] || skip "a semver-major update stays open for a human or codna decision (auto_merge_majors is false)"
+              [ "$AUTO_MERGE_MAJORS" = "true" ] || skip "a semver-major update ($basis) stays open for a human or codna decision (auto_merge_majors is false)"
               ;;
-            "") skip "Dependabot recorded no update-type for this change (a requirement-range change is not a version bump); a human decides" ;;
-            *) skip "unrecognised update-type '$UPDATE_TYPE'" ;;
+            "") skip "Dependabot recorded no update-type for this change and its title is not a requirement update; a human decides" ;;
+            *) skip "unrecognised update-type '$update_type'" ;;
           esac
+
+          # --- the review ---------------------------------------------------------------------
           case "$REVIEWER_REVIEW" in
             APPROVED) ;;
-            "") skip "$REVIEWER has not reviewed yet; this runs again when its review is submitted" ;;
+            "") skip "no $REVIEWER review yet; this runs again when its review is submitted" ;;
             *) skip "the latest $REVIEWER review is $REVIEWER_REVIEW, not APPROVED; a human or agent decides" ;;
           esac
+          [ -n "$REVIEWER_REVIEW_COMMIT" ] && [ "$REVIEWER_REVIEW_COMMIT" = "$HEAD_SHA" ] || skip "approved at ${REVIEWER_REVIEW_COMMIT:-an unknown commit}, but the head is now $HEAD_SHA; this runs again when $REVIEWER reviews this head"
           case "$REVIEW_DECISION" in
             APPROVED|"") ;;
             *) skip "the pull request's review decision is $REVIEW_DECISION" ;;
           esac
-          [ "$UNRESOLVED_THREADS" = "0" ] || skip "$UNRESOLVED_THREADS unresolved review thread(s); findings are never resolved here, a human decides"
-          echo "decision=enable" >> "$GITHUB_OUTPUT"
-          echo "reason=" >> "$GITHUB_OUTPUT"
+          [ "$UNRESOLVED_THREADS" = "0" ] || skip "with $UNRESOLVED_THREADS unresolved review thread(s); findings are never resolved here, a human decides"
+          [ "$MERGE_STATE" != "BEHIND" ] || [ "$MERGE_QUEUE" = "true" ] || update_branch=true
+          finish enable ""
 
       - name: Mint a scoped App installation token
-        # Only when the decision is to enable; the secret reaches this input and nothing else.
-        # Scoped to this one repository. `workflows: write` is requested because a Dependabot
-        # actions-group update edits .github/workflows/*.yml, and a merge performed by a token
-        # without that permission is refused for such a pull request.
+        # Only when there is something to do with it: enable, disarm, or bring the branch up to
+        # date; the secret reaches this input and nothing else. Scoped to this one repository.
+        # `workflows: write` is requested because a Dependabot actions-group update edits
+        # .github/workflows/*.yml, and a merge or a branch update performed by a token without
+        # that permission is refused for such a pull request.
         id: mint
-        if: steps.decide.outputs.decision == 'enable'
+        if: steps.decide.outputs.decision == 'enable' || steps.decide.outputs.decision == 'disarm' || steps.decide.outputs.update_branch == 'true'
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ inputs.app_id }}
@@ -278,6 +474,21 @@ jobs:
           permission-workflows: write
           permission-metadata: read
 
+      - name: The App inputs name one App
+        # `app_id` minted the token; `app_slug` is how Decide recognised this App's own
+        # auto-merge. Were they two Apps, the steps below would disarm or update an arm that is
+        # not this App's -- refused as a misconfiguration.
+        if: steps.decide.outputs.decision == 'enable' || steps.decide.outputs.decision == 'disarm' || steps.decide.outputs.update_branch == 'true'
+        env:
+          MINTED_SLUG: ${{ steps.mint.outputs.app-slug }}
+          APP_SLUG: ${{ inputs.app_slug }}
+        run: |
+          set -euo pipefail
+          if [ "$MINTED_SLUG" != "$APP_SLUG" ]; then
+            echo "::error title=dependabot-auto-merge::app_id minted a token for App '$MINTED_SLUG' but app_slug is '$APP_SLUG'; both inputs must name the same App"
+            exit 1
+          fi
+
       - name: Enable auto-merge
         # `gh pr merge --auto` enables auto-merge when requirements are still outstanding, and
         # merges right away when the pull request already meets every one of them -- the same
@@ -287,21 +498,72 @@ jobs:
           GH_TOKEN: ${{ steps.mint.outputs.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
-          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          UPDATE_TYPE: ${{ steps.decide.outputs.update_type }}
+          BASIS: ${{ steps.decide.outputs.update_type_basis }}
           MERGE_STATE: ${{ steps.facts.outputs.merge_state }}
+          HEAD_SHA: ${{ steps.facts.outputs.head_sha }}
         run: |
           set -euo pipefail
           gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --auto "--${MERGE_METHOD}"
           after="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state,autoMergeRequest --jq '"state=\(.state | ascii_downcase) auto_merge_enabled_by=\(.autoMergeRequest.enabledBy.login // "-")"')"
-          echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: ${UPDATE_TYPE} -- auto-merge (${MERGE_METHOD}) requested; merge state was ${MERGE_STATE}; now ${after}"
+          echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: ${UPDATE_TYPE} (${BASIS}) -- auto-merge (${MERGE_METHOD}) requested for head ${HEAD_SHA}; merge state was ${MERGE_STATE}; now ${after}"
           {
             echo "### dependabot-auto-merge -- #${PR_NUMBER}"
             echo
             echo "| | |"
             echo "|---|---|"
             echo "| update type | \`${UPDATE_TYPE}\` |"
+            echo "| classified | ${BASIS} |"
             echo "| merge method | \`${MERGE_METHOD}\` |"
+            echo "| head | \`${HEAD_SHA}\` |"
             echo "| merge state before | \`${MERGE_STATE}\` |"
+            echo "| after | \`${after}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Disarm
+        # This App's own auto-merge no longer rests on codna's approval of the current head
+        # ("An arm is good for one head" in the header): disable it. The enable path re-arms the
+        # pull request when codna's review of this head is an approval with no unresolved thread.
+        if: steps.decide.outputs.decision == 'disarm'
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --disable-auto
+          after="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json autoMergeRequest --jq '"auto_merge_enabled_by=\(.autoMergeRequest.enabledBy.login // "-")"')"
+          echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: disarmed: ${REASON}; now ${after}"
+          {
+            echo "### dependabot-auto-merge -- #${PR_NUMBER}: disarmed"
+            echo
+            echo "$REASON"
+            echo
+            echo "now \`${after}\`; auto-merge is enabled again once the reviewer approves this head with no unresolved thread"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bring the pull request up to date with its base branch
+        # BEHIND under a strict ruleset, armed (just now, or earlier by this App) and not behind a
+        # merge queue: merge the base branch into the head with the App token ("Merge state" in
+        # the header). Guarded by the head Decide saw; a no-op when the branch is not behind.
+        # The new head is a `synchronize` event: the next run disarms, codna reviews the head,
+        # and its approval re-arms.
+        if: steps.decide.outputs.update_branch == 'true'
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ steps.facts.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          gh pr update-branch "$PR_NUMBER" -R "$GITHUB_REPOSITORY"
+          after="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json headRefOid,mergeStateStatus --jq '"head=\(.headRefOid) merge_state=\(.mergeStateStatus)"')"
+          echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: was BEHIND at head ${HEAD_SHA}; the base branch was merged into it with this App's token; now ${after}; the reviewer reviews the new head before auto-merge completes"
+          {
+            echo "### dependabot-auto-merge -- #${PR_NUMBER}: brought up to date"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| head before | \`${HEAD_SHA}\` (BEHIND) |"
             echo "| after | \`${after}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -316,3 +578,132 @@ jobs:
             echo
             echo "$REASON"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  sweep:
+    name: bring this App's armed pull requests up to date
+    # A push to the default branch turns every open Dependabot pull request BEHIND under a strict
+    # ruleset, and no event of their own follows ("Merge state" in the header): find the ones this
+    # App armed and merge the pushed branch into each. Nothing is armed, disarmed or decided here.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # consecutive pushes: the later sweep supersedes the earlier
+    concurrency:
+      group: dependabot-auto-merge-${{ github.repository }}-sweep
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Find the open Dependabot pull requests this App armed that are behind the pushed branch
+        # Read-only, with the default token. GraphQL renders a Bot's login without the [bot]
+        # suffix (`dependabot`, `<app_slug>`).
+        id: behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_SLUG: ${{ inputs.app_slug }}
+          BASE: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          query="$(cat <<'GRAPHQL'
+            query($owner: String!, $name: String!, $base: String!, $endCursor: String) {
+              repository(owner: $owner, name: $name) {
+                pullRequests(first: 100, states: OPEN, baseRefName: $base, after: $endCursor) {
+                  pageInfo { hasNextPage endCursor }
+                  nodes {
+                    number isDraft isCrossRepository isMergeQueueEnabled mergeStateStatus headRefOid
+                    author { login __typename }
+                    autoMergeRequest { enabledBy { login __typename } }
+                  }
+                }
+              }
+            }
+          GRAPHQL
+          )"
+          # Dependabot's own pull requests whose auto-merge this App enabled (jq reads the slug from
+          # this step's environment): same-repository, not drafts, base without a merge queue (the
+          # queue updates for it)
+          filter='[.[].data.repository.pullRequests.nodes[]
+            | select(.author.__typename == "Bot" and .author.login == "dependabot")
+            | select(.autoMergeRequest.enabledBy.__typename == "Bot" and .autoMergeRequest.enabledBy.login == env.APP_SLUG)
+            | select((.isDraft or .isCrossRepository or .isMergeQueueEnabled) | not)]'
+          # GitHub recomputes mergeability after the push and reports UNKNOWN meanwhile: re-read
+          # while any armed pull request is still UNKNOWN, up to a minute
+          for attempt in 1 2 3 4 5 6; do
+            armed="$(gh api graphql --paginate --slurp -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -f base="$BASE" -f query="$query" \
+              | jq -c "$filter")"
+            [ "$(jq '[.[] | select(.mergeStateStatus == "UNKNOWN")] | length' <<<"$armed")" != "0" ] || break
+            [ "$attempt" = "6" ] || sleep 10
+          done
+          behind="$(jq -c '[.[] | select(.mergeStateStatus == "BEHIND")]' <<<"$armed")"
+          numbers="$(jq -r '.[].number' <<<"$behind" | tr '\n' ' ')"
+          numbers="${numbers% }"
+          count="$(jq 'length' <<<"$behind")"
+          list="${numbers:+#}${numbers// / #}"
+          {
+            echo "count=$count"
+            echo "numbers=$numbers"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice title=dependabot-auto-merge::push to ${BASE}: $(jq 'length' <<<"$armed") open Dependabot pull request(s) armed by this App, ${count} behind${list:+: }${list}"
+          {
+            echo "### dependabot-auto-merge -- sweep after a push to \`${BASE}\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| armed by this App | $(jq 'length' <<<"$armed") |"
+            echo "| behind | ${count} |"
+            echo "| pull requests | ${list:-none} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mint a scoped App installation token
+        # Only when there is a branch to update; the secret reaches this input and nothing else.
+        id: mint
+        if: steps.behind.outputs.count != '0'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ inputs.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-metadata: read
+
+      - name: The App inputs name one App
+        if: steps.behind.outputs.count != '0'
+        env:
+          MINTED_SLUG: ${{ steps.mint.outputs.app-slug }}
+          APP_SLUG: ${{ inputs.app_slug }}
+        run: |
+          set -euo pipefail
+          if [ "$MINTED_SLUG" != "$APP_SLUG" ]; then
+            echo "::error title=dependabot-auto-merge::app_id minted a token for App '$MINTED_SLUG' but app_slug is '$APP_SLUG'; both inputs must name the same App"
+            exit 1
+          fi
+
+      - name: Bring them up to date
+        # One update per pull request, each guarded by its head; a failure (a conflict, a lost
+        # race) is reported and the rest are still updated. Each update is a `synchronize` event
+        # for its pull request: the enable job disarms, codna reviews the head, its approval re-arms.
+        if: steps.behind.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ steps.mint.outputs.token }}
+          NUMBERS: ${{ steps.behind.outputs.numbers }}
+        run: |
+          set -euo pipefail
+          failed=""
+          while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            if gh pr update-branch "$n" -R "$GITHUB_REPOSITORY"; then
+              echo "::notice title=dependabot-auto-merge::#${n}: was BEHIND; the base branch was merged into it with this App's token; the reviewer reviews the new head before auto-merge completes"
+              echo "- #${n}: brought up to date" >> "$GITHUB_STEP_SUMMARY"
+            else
+              failed="${failed} #${n}"
+              echo "- #${n}: NOT updated (see the log)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done < <(tr ' ' '\n' <<<"$NUMBERS")
+          if [ -n "$failed" ]; then
+            echo "::error title=dependabot-auto-merge::could not bring up to date:${failed}"
+            exit 1
+          fi

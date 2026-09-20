@@ -31,9 +31,14 @@
     "Up-to-date policy (strict_required_status_checks_policy), audited 2026-09-20: a merge turns the other",
     "open Dependabot PRs BEHIND and Dependabot did not rebase them, so the policy is off on every private",
     "repository (cohenta 17646026 and algenta 17410382 switched off that day). Public repositories keep it:",
-    "algenta-sdk behind its merge queue (which rebases), and algenta-integrations, mojo-kernels, codna-action,",
-    "feedback without one -- there a Dependabot PR lands on its own only while up to date, else after",
-    "`@dependabot rebase`; OpenSSF Scorecard's Branch-Protection check scores the policy, so it stays."
+    "algenta-sdk behind its merge queue (which updates for it), and algenta-integrations, mojo-kernels,",
+    "codna-action, feedback without one; OpenSSF Scorecard's Branch-Protection check scores the policy, so it",
+    "stays. Since v0.1.17 the caller brings a BEHIND Dependabot PR the App armed up to date itself (the callee",
+    "merges main into it with the App token, on the PR's own events and on every push to main) -- Dependabot",
+    "ignores `@dependabot rebase` from a GitHub App (dependabot-core#9147). The rendered caller therefore also",
+    "triggers on push to main, every fleet repository's default branch (checked 2026-09-20).",
+    "An arm is good for one head (v0.1.17): the callee disarms an auto-merge it enabled when the head changes",
+    "or codna's latest verdict on the current head is not an approval; a human's auto-merge is never touched."
   ],
   "toolchain": { "repo": "thyn-ai/security-toolchain", "default_branch": "main" },
   "defaults": {

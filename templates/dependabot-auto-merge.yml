@@ -13,14 +13,21 @@
 # (a repository ruleset, or the thyn-ai org ruleset "Codna Review required"). Without that
 # requirement auto-merge would complete on green CI alone.
 #
-# Two events, both carrying the pull request: Dependabot's own pushes, and codna's approving
-# review being submitted (the decision needs it, and it lands minutes after the push). The job
-# runs for no other review -- not another reviewer's, not a comment or a change request -- so
-# only Dependabot and codna can start the secret-bearing path. A pull request codna left findings
-# on is yours from there: resolve them and merge it (or enable auto-merge) yourself.
+# Three events. Two carry the pull request: Dependabot's own pushes (and any other push to the
+# head branch), and a codna review being submitted, in any state -- the job decides: an approval
+# of the current head with no unresolved finding arms the pull request, anything else leaves it
+# alone or disarms an auto-merge this workflow itself enabled earlier (an arm is good for one
+# head; a new head waits for codna's review of it). The job runs for no other reviewer, so only
+# Dependabot and codna can start the secret-bearing path. An auto-merge you enabled yourself is
+# never touched. A pull request codna left findings on is yours from there: resolve them and merge
+# it (or enable auto-merge) yourself. The third event is a push to `main`: the called workflow then
+# brings the armed Dependabot pull requests that fell behind it up to date (a ruleset requiring
+# branches to be up to date turns them BEHIND on every merge, and GitHub's auto-merge never
+# updates a branch), merging `main` into each with the App's token.
 # pull_request_target runs on the base branch with this repository's secrets. The called workflow
 # never checks out or executes anything from the pull request: it reads the update type
-# Dependabot signed into its commit and calls the API.
+# Dependabot signed into its commit (and, for a requirement-range update, the two ranges in the
+# title, matched against a fixed grammar) and calls the API.
 name: dependabot-auto-merge
 
 on:
@@ -28,15 +35,18 @@ on:
     types: [opened, synchronize, reopened]
   pull_request_review:
     types: [submitted]
+  push:
+    branches: [main]
 
 permissions: {{}}
 
 jobs:
   enable:
     if: >-
-      github.event.pull_request.user.login == 'dependabot[bot]'
+      github.event_name == 'push'
+      || (github.event.pull_request.user.login == 'dependabot[bot]'
       && (github.event_name != 'pull_request_review'
-      || (github.event.review.user.login == 'codna-ai[bot]' && github.event.review.state == 'approved'))
+      || github.event.review.user.login == 'codna-ai[bot]'))
     uses: thyn-ai/security-toolchain/.github/workflows/dependabot-auto-merge.yml@{sha} # {tag}
     permissions:
       contents: read
