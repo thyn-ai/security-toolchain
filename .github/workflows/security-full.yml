@@ -2,6 +2,10 @@
 #
 # Call it from a repository's .github/workflows/security.yml:
 #
+#   on:
+#     pull_request:
+#     merge_group:
+#     push: { branches: [main] }
 #   jobs:
 #     full:
 #       uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # vX.Y.Z
@@ -9,15 +13,20 @@
 #       with: { overlay: python-uv, mode: advisory }
 #
 # It re-runs exactly the policy the pre-push hooks run on a laptop, on a clean checkout, on
-# a standard GitHub-hosted runner. Scope on pull requests and on pushes to non-default
+# a standard GitHub-hosted runner. Scope on pull requests, on merge groups (the same pull
+# request one step later: `merge_group.base_sha`...`head_sha`) and on pushes to non-default
 # branches is the changed-file list (fail-closed to a full scan); pushes to the default
 # branch and the weekly schedule always scan everything. `thyn-sec changed-files` enforces
 # the default-branch rule itself (not the checkout depth): GitHub closes every code-scanning
 # alert missing from the newest SARIF upload for a ref+category, so a partial upload for
 # the default branch would close alerts in untouched files and reopen them later.
 #
-# The `thyn-ai/security-toolchain@vX.Y.Z` composite reference below is bumped by the release
-# process so that a tagged workflow always installs the toolchain of its own tag.
+# The toolchain this runs is this very commit. The job reads the commit and repository of the
+# workflow file that defines it out of the job context (`job.workflow_sha`,
+# `job.workflow_repository`: the ref the caller pinned, resolved), checks exactly that out and
+# installs it through the composite action in that checkout. There is no version literal to
+# bump at release time and nothing a pin checker reads as unpinned; tests/test_self_reference.py
+# holds the shape.
 name: security-full
 
 on:
@@ -85,15 +94,51 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Locate the toolchain commit this workflow runs from
+        # `job.workflow_sha` and `job.workflow_repository` describe the reusable workflow file
+        # that defines this job -- the ref the caller pinned, resolved to a commit -- where the
+        # `github` context keeps describing the caller. Read through toJSON(job): the pinned
+        # actionlint (1.7.12) predates these job properties. Anything but a 40-hex commit and an
+        # owner/repository name refuses to go on rather than install an unknown toolchain. The
+        # output is named for what it is, a revision: CodeQL's untrusted-checkout heuristic reads
+        # a checkout `ref` field called sha/head/commit/ref as a pull-request head by name alone.
+        id: self
+        env:
+          JOB_CONTEXT: ${{ toJSON(job) }}
+        run: |
+          set -euo pipefail
+          revision="$(jq -r '.workflow_sha // empty' <<<"$JOB_CONTEXT")"
+          repository="$(jq -r '.workflow_repository // empty' <<<"$JOB_CONTEXT")"
+          if ! [[ "$revision" =~ ^[0-9a-f]{40}$ && "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error title=thyn-sec::cannot locate this workflow's own commit (job.workflow_repository=${repository:-unset}, job.workflow_sha=${revision:-unset}); refusing to install an unknown toolchain"
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the toolchain at that commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.self.outputs.repository }}
+          ref: ${{ steps.self.outputs.revision }}
+          path: .thyn-sec-toolchain
+          persist-credentials: false
+
       - name: Set up thyn-sec
         id: setup
-        uses: thyn-ai/security-toolchain@v0.1.12 # kept == this file's own release; bump both together (tests/test_self_reference.py enforces it)
+        uses: ./.thyn-sec-toolchain
         with:
           python-version: ${{ inputs.python_version }}
 
+      - name: Park the toolchain source outside the scanned tree
+        # A local action has to live under the workspace, and the scanners must never see it
+        # (its fixtures are deliberate findings). It comes back in the last step: the composite
+        # action's post steps -- the scanner-cache save -- read its action.yml at job end.
+        run: mv "$GITHUB_WORKSPACE/.thyn-sec-toolchain" "$RUNNER_TEMP/thyn-sec-source"
+
       - name: Verify pins
         env:
-          EXPECT_REF: ${{ steps.setup.outputs.ref }}
+          EXPECT_REF: ${{ steps.self.outputs.revision }}
         run: thyn-sec verify-toolchain --expect-ref "$EXPECT_REF"
 
       - name: Derive changed files
@@ -119,10 +164,12 @@ jobs:
           if [ "$SCAN_TESTS" = "true" ]; then args+=(--opengrep-scan-tests); fi
           thyn-sec "${args[@]}"
 
+      # SARIF goes to code scanning on every event but a pull request from a fork, whose token
+      # cannot write it. A merge group carries no `pull_request` in its payload and uploads.
       - name: Upload Opengrep SARIF
         # opengrep_sarif names the code-scanning copy: audit / low-confidence results are dropped from
         # it unless opengrep_upload_audit is true. The full opengrep.sarif stays in the reports artifact.
-        if: ${{ always() && steps.scan.outputs.opengrep_sarif != '' && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ always() && steps.scan.outputs.opengrep_sarif != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         continue-on-error: true
         with:
@@ -130,7 +177,7 @@ jobs:
           category: thyn-sec/opengrep
 
       - name: Upload Trivy SARIF
-        if: ${{ always() && steps.scan.outputs.trivy_sarif != '' && github.event.pull_request.head.repo.fork != true }}
+        if: ${{ always() && steps.scan.outputs.trivy_sarif != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true) }}
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         continue-on-error: true
         with:
@@ -174,3 +221,10 @@ jobs:
             echo
             echo "Files: ${FILES:-none}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Return the toolchain source for the action's post steps
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/thyn-sec-source" ]; then
+            mv "$RUNNER_TEMP/thyn-sec-source" "$GITHUB_WORKSPACE/.thyn-sec-toolchain"
+          fi

@@ -4,12 +4,17 @@ Properties, for arbitrary paths, list files, event payloads and environment valu
 
 * ``MANIFEST_RE`` / ``IAC_RE`` classify any path without raising; ``ALL`` matches everything.
 * ``write_list`` then ``read_list`` returns the list that was written (whitespace-trimmed,
-  empty lines dropped) and ``ALL`` round-trips as ``ALL`` -- the file format the CI job hands
-  from ``thyn-sec changed-files`` to ``thyn-sec ci`` loses nothing.
+  empty lines dropped), and a lone ``ALL`` line -- in any letter case, the rule ``read_list``
+  shares with ``THYN_SEC_CHANGED_FILES`` -- reads back as ``ALL``: the file format the CI job
+  hands from ``thyn-sec changed-files`` to ``thyn-sec ci`` loses nothing. (The coverage-guided
+  run found ``ALl``; ``corpus/changed/all-mixed-case.txt`` keeps it.)
 * ``from_github_event`` returns ``ALL`` or a sorted, duplicate-free list of strings for any
   JSON payload and any event name -- never an exception. The two things that would leave the
   process (the PR-files API and ``git diff``) are stubbed, so the harness exercises the
   decision logic only and never touches the network or a repository.
+* ``merge_group_pull_number`` answers ``None`` or a positive integer that appears in the ref
+  for any value, string or not: a merge group is scoped as the pull request its queue ref
+  names, and a ref of any other shape falls through to the SHA diff.
 * ``_pushed_default_branch`` answers the default branch only when the pushed ref *is* that
   branch, and never raises on payload fields of the wrong type.
 * ``opengrep_targets`` returns a subset of its input in input order, every entry an existing
@@ -42,11 +47,34 @@ EVENT_KEYS = (
     "base",
     "head",
     "sha",
+    "merge_group",
+    "head_sha",
+    "head_ref",
+    "base_sha",
+    "base_ref",
 )
-EVENT_NAMES = ("push", "pull_request", "pull_request_target", "schedule", "workflow_dispatch", "")
+EVENT_NAMES = (
+    "push",
+    "pull_request",
+    "pull_request_target",
+    "merge_group",
+    "schedule",
+    "workflow_dispatch",
+    "",
+)
 REFS = ("refs/heads/main", "refs/heads/feature", "refs/tags/main", "main", "")
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+QUEUE_REFS = (
+    f"refs/heads/gh-readonly-queue/main/pr-7-{SHA_A}",
+    f"refs/heads/gh-readonly-queue/release/1.x/pr-12-{SHA_B}",
+    f"refs/heads/gh-readonly-queue/main/pr-0-{SHA_A}",
+    "refs/heads/gh-readonly-queue/main/pr-7-abc",
+    "refs/heads/main",
+    "",
+    None,
+    7,
+)
 ENV_KEYS = (
     "GITHUB_REF",
     "GITHUB_REF_NAME",
@@ -119,6 +147,17 @@ def _event(fdp: Any) -> Any:
         )
     if fdp.ConsumeBool():
         ev["number"] = fdp.PickValueInList([7, "7", None])
+    if fdp.ConsumeBool():
+        ev["merge_group"] = (
+            {
+                "head_sha": _sha_or_junk(fdp),
+                "head_ref": fdp.PickValueInList(list(QUEUE_REFS)),
+                "base_sha": _sha_or_junk(fdp),
+                "base_ref": fdp.PickValueInList(list(REFS)),
+            }
+            if fdp.ConsumeBool()
+            else json_value(fdp, EVENT_KEYS, depth=2)
+        )
     return ev
 
 
@@ -166,6 +205,14 @@ def exercise_event(fdp: Any, env: dict[str, str]) -> None:
         env["GITHUB_TOKEN"] = fdp.ConsumeUnicodeNoSurrogates(4).replace("\x00", "") or "t"
     changed._git_diff, changed._api_pr_files = _stub_diff(state), _stub_api(state)
     _check_result(changed.from_github_event(), "from_github_event", none_ok=True)
+    for head_ref in (text(fdp, 60), fdp.PickValueInList(list(QUEUE_REFS))):
+        number = changed.merge_group_pull_number(head_ref)
+        check(
+            number is None or (isinstance(number, int) and number > 0),
+            f"merge group number {number!r} is neither None nor a positive int",
+        )
+        if number is not None:
+            check(f"/pr-{number}-" in head_ref, "merge group number not read off the ref")
     if isinstance(event, dict):
         default = changed._pushed_default_branch(event)
         if default is not None:
@@ -207,8 +254,8 @@ def exercise_lists(fdp: Any) -> None:
         changed.write_list(lines, LIST_FILE)
         back = changed.read_list(LIST_FILE)
         expected = [ln.strip() for ln in lines]
-        if expected == ["ALL"]:
-            check(back == changed.ALL, "a single ALL line reads as ALL")
+        if len(expected) == 1 and expected[0].upper() == changed.ALL:
+            check(back == changed.ALL, "a lone ALL line, in any letter case, reads as ALL")
         else:
             check(back == expected, f"list round-trip changed the content: {back!r}")
     check(changed.describe(changed.ALL).startswith("ALL"), "describe(ALL)")

@@ -4,9 +4,12 @@
 For each repository this opens ONE pull request that touches only:
 
 * the marker-delimited block in ``.pre-commit-config.yaml`` (created if absent, together
-  with a minimal config for repositories that have none), and
+  with a minimal config for repositories that have none),
 * the ``uses: thyn-ai/security-toolchain/...@<sha> # <tag>`` pin in
-  ``.github/workflows/security.yml`` (created from the template if absent).
+  ``.github/workflows/security.yml`` (created from the template if absent), and
+* the ``merge_group:`` trigger next to ``pull_request:`` in that workflow, added when it is
+  missing (mirroring the pull-request ``branches`` filter), so the gate stays a valid required
+  check behind a merge queue.
 
 Existing ``overlay``/``mode`` choices in a caller workflow are preserved; only the pin
 moves. Repositories that are mirrored from elsewhere declare ``sync_safe_paths`` and the
@@ -35,6 +38,11 @@ TOOLCHAIN_REPO = "thyn-ai/security-toolchain"
 _USES_RE = re.compile(
     r"(uses:\s*thyn-ai/security-toolchain/\.github/workflows/security-(?:full|smoke)\.ya?ml@)"
     r"[^\s#]+([ \t]*#[ \t]*[^\s]+)?"
+)
+# A block-style `on:` and the indented entries under it; a flow-style `on: [push, ...]` does not
+# match, and such a caller is left as it is.
+_ON_BLOCK_RE = re.compile(
+    r"(?m)^(?:on|\"on\"|'on'):[ \t]*\n(?P<body>(?:[ \t]+\S[^\n]*\n|[ \t]*\n)*)"
 )
 _ATTRIBUTION = "\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 _TRAILER = "\n\nCo-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -108,9 +116,46 @@ def upsert_workflow(
 ) -> str:
     if existing is not None and _USES_RE.search(existing):
         text = _USES_RE.sub(lambda m: f"{m.group(1)}{sha} # {tag}", existing)
-        return _carry_forward_permissions(text, kind)
+        return add_merge_group_trigger(_carry_forward_permissions(text, kind))
     template = TEMPLATES / ("security.yml" if kind == "full" else "security-smoke.yml")
     return template.read_text(encoding="utf-8").format(sha=sha, tag=tag, overlay=overlay, mode=mode)
+
+
+def add_merge_group_trigger(text: str) -> str:
+    """Trigger the caller on ``merge_group`` too, right after its ``pull_request`` entry.
+
+    A merge queue runs the checks it requires on a ``merge_group`` event, so a caller that
+    triggers on ``pull_request`` and ``push`` only can never report ``full / security gate`` for
+    a queued pull request and the queue waits forever. The entry mirrors the pull-request
+    ``branches`` / ``branches-ignore`` filter -- the only pull-request filters a merge group
+    accepts -- and nothing else. Callers already triggering on it, and shapes this reader does
+    not recognise (a flow-style ``on: [push, pull_request]``, no ``pull_request`` entry), come
+    back unchanged.
+    """
+    on = _ON_BLOCK_RE.search(text)
+    if not on:
+        return text
+    body = on.group("body")
+    first = re.search(r"(?m)^([ \t]+)\S", body)
+    if not first:
+        return text
+    indent = first.group(1)
+    # spaces and tabs only, by the capture above; escaped anyway so the patterns read as literal
+    indent_re = re.escape(indent)
+    if re.search(rf"(?m)^{indent_re}merge_group:", body):
+        return text
+    pull = re.search(
+        rf"(?m)^{indent_re}pull_request:[^\n]*\n(?P<nested>(?:{indent_re}[ \t]+\S[^\n]*\n)*)", body
+    )
+    if not pull:
+        return text
+    branches = re.search(
+        rf"(?m)^(?P<i>{indent_re}[ \t]+)branches(?:-ignore)?:[^\n]*\n(?:(?P=i)[ \t]+\S[^\n]*\n)*",
+        pull.group("nested"),
+    )
+    entry = f"{indent}merge_group:\n" + (branches.group(0) if branches else "")
+    at = on.start("body") + pull.end()
+    return text[:at] + entry + text[at:]
 
 
 # A caller job may grant no less than the reusable workflow's job requests, or GitHub
@@ -208,7 +253,9 @@ def propagate(
             f"- overlay `{cfg['overlay']}`, mode `{cfg.get('mode', defaults['mode'])}`\n"
             "- advisory mode never fails CI; ratchet fails only on findings not in\n"
             "  `security/baseline/`\n"
-            "- baselines are measured on CI via `workflow_dispatch` → `measure_baseline`\n\n"
+            "- baselines are measured on CI via `workflow_dispatch` → `measure_baseline`\n"
+            "- the caller triggers on `merge_group` as well as `pull_request` and `push`, so the\n"
+            "  gate stays a valid required check behind a merge queue\n\n"
             f"Opened by `scripts/propagate.py` from {TOOLCHAIN_REPO}."
         )
         message = title + "\n\n" + body + (_TRAILER if args.attribution else "")

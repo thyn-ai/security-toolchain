@@ -6,6 +6,13 @@ local history); on ``push`` to a non-default branch it is ``git diff before...af
 anything that cannot be derived with certainty returns ``ALL`` so the scan widens rather
 than narrows.
 
+A ``merge_group`` event is the same pull request one step later: the merge queue built a
+temporary branch (``refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha>``) holding the queue's
+tip plus that pull request, and ``merge_group.base_sha``...``head_sha`` is exactly the pull
+request's contribution to it. The group is scoped like the pull request it was built for --
+its files from the API when the number can be read off ``head_ref``, otherwise the diff of
+the two SHAs -- and widens to ``ALL`` when neither can be derived.
+
 A push to the repository's default branch is always ``ALL``, by policy rather than by
 accident. GitHub marks every code-scanning alert that is absent from the newest SARIF
 upload for a ref+category as fixed, so a partial upload for ``refs/heads/<default>`` would
@@ -29,13 +36,15 @@ import urllib.error
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Union
 
 ALL = "ALL"
-Changed = Union[str, list[str]]  # ALL or a concrete list
+Changed = str | list[str]  # ALL or a concrete list
 
 ZERO_SHA = "0" * 40
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# The temporary branch a merge queue builds a group on ends in ``pr-<number>-<base sha>``; the
+# base branch before it may itself contain slashes, so the number is read from the end.
+_MERGE_GROUP_REF_RE = re.compile(r"/pr-([1-9][0-9]*)-[0-9a-f]{40}$")
 
 # Files whose change means "dependencies may have changed" -> run OSV.
 MANIFEST_RE = re.compile(
@@ -187,6 +196,31 @@ def _text(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
+def merge_group_pull_number(head_ref: object) -> int | None:
+    """The pull request a merge group was built for, read from ``merge_group.head_ref``.
+
+    ``refs/heads/gh-readonly-queue/main/pr-104-<base sha>`` names #104; anything of another
+    shape (or type) is None, and the caller falls through to the SHA diff.
+    """
+    m = _MERGE_GROUP_REF_RE.search(_text(head_ref))
+    return int(m.group(1)) if m else None
+
+
+def _pull_scope(number: object, base: str, head: str, repo: str, server: str, what: str) -> Changed:
+    """Changed files of one pull request: its files from the API, else the diff, else ALL."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if isinstance(number, int) and number > 0 and token and repo:
+        files = _api_pr_files(repo, number, token, server)
+        if files is not None:
+            return sorted(set(files))
+    if base and head:
+        files = _git_diff(base, head)
+        if files is not None:
+            return sorted(set(files))
+    _log(f"could not derive {what} changed files; widening to ALL")
+    return ALL
+
+
 def _pushed_default_branch(event: dict) -> str | None:
     """Name of the default branch when the pushed ref *is* that branch, else None.
 
@@ -225,19 +259,14 @@ def from_github_event() -> Changed | None:
     if event_name in ("pull_request", "pull_request_target"):
         pull = _mapping(event.get("pull_request"))
         number = pull.get("number") or event.get("number")
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        if isinstance(number, int) and number > 0 and token and repo:
-            files = _api_pr_files(repo, number, token, server)
-            if files is not None:
-                return sorted(set(files))
         base = _text(_mapping(pull.get("base")).get("sha"))
         head = _text(_mapping(pull.get("head")).get("sha"))
-        if base and head:
-            files = _git_diff(base, head)
-            if files is not None:
-                return sorted(set(files))
-        _log("could not derive PR changed files; widening to ALL")
-        return ALL
+        return _pull_scope(number, base, head, repo, server, "PR")
+    if event_name == "merge_group":
+        group = _mapping(event.get("merge_group"))
+        number = merge_group_pull_number(group.get("head_ref"))
+        base, head = _text(group.get("base_sha")), _text(group.get("head_sha"))
+        return _pull_scope(number, base, head, repo, server, "merge-group")
     if event_name == "push":
         default = _pushed_default_branch(event)
         if default:

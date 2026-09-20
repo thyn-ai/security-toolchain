@@ -85,6 +85,15 @@ def test_caller_templates_pin_by_sha_with_tag_comment():
         assert "permissions:" in text
 
 
+def test_caller_templates_trigger_on_merge_group_next_to_pull_request():
+    """A merge queue runs the checks it requires on `merge_group`; a caller triggering on
+    `pull_request` and `push` only can never report `full / security gate` for a queued pull
+    request, and the queue waits forever (thyn-ai/algenta-sdk)."""
+    for name in ("security.yml", "security-smoke.yml"):
+        text = (REPO / "templates" / name).read_text(encoding="utf-8")
+        assert "\non:\n  pull_request:\n  merge_group:\n  push:\n" in text, name
+
+
 def test_pnpm_monorepo_is_an_alias_of_python_javascript():
     """The pre-0.1.12 name stays resolvable for callers already propagated with it and can
     never drift from the pack set it names. thyn-ai/mojo-kernels#9 read the old name as a

@@ -181,6 +181,8 @@ def test_event_payload_that_is_not_an_object_widens_to_all(
         {"pull_request": [1]},
         {"pull_request": {"number": "7", "base": {"sha": 1}, "head": "x"}},
         {"before": 1, "after": None},
+        {"merge_group": [1]},
+        {"merge_group": {"head_ref": 5, "base_sha": 1, "head_sha": None}},
     ],
 )
 def test_wrongly_typed_event_fields_fail_closed(
@@ -193,7 +195,7 @@ def test_wrongly_typed_event_fields_fail_closed(
     monkeypatch.delenv("GITHUB_REF_NAME", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    for name in ("push", "pull_request"):
+    for name in ("push", "pull_request", "merge_group"):
         monkeypatch.setenv("GITHUB_EVENT_NAME", name)
         assert changed.from_github_event() == changed.ALL
     assert changed._pushed_default_branch(event) in (None, "main")

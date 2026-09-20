@@ -29,7 +29,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.12
+    rev: v0.1.13
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -47,9 +47,14 @@ repos:
 
 ```yaml
 # .github/workflows/security.yml
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.12
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.13
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
@@ -66,6 +71,11 @@ names a reusable-workflow dependency by its full path, so the pattern needs a wi
     ignore:
       - dependency-name: "thyn-ai/security-toolchain*"
 ```
+
+The `merge_group` trigger is what lets `full / security gate` be a required check on a branch
+protected by a merge queue: the queue runs the checks it requires on that event, and a caller
+without it would wait for a status that never arrives. `propagate.py` adds the trigger to a
+caller that lacks it, mirroring the `branches` filter of its `pull_request` entry.
 
 `pre-commit install` installs both stages. The first run fetches the pinned binaries into
 `~/.cache/thyn-sec` (about 250 MB, verified against `security/toolchain.lock`); after that
@@ -119,8 +129,10 @@ The same gate runs everywhere: `thyn-sec ci` on CI, one tool at a time in the ho
 
 On pull requests the CI job scopes Opengrep to the changed files and skips OSV-Scanner
 or Trivy when no manifest or infrastructure file changed; the list is derived fail-closed
-(anything uncertain widens to a full scan). Pushes to `main` and the weekly schedule scan
-everything.
+(anything uncertain widens to a full scan). A merge group is scoped as the pull request it
+was built for -- its files from the API when the queue ref names the number, otherwise
+`git diff merge_group.base_sha...head_sha`, otherwise everything. Pushes to `main` and the
+weekly schedule scan everything.
 
 ## Overlays
 
@@ -148,6 +160,14 @@ sha256 of each release asset per platform. Nothing is executed before its digest
 `@<sha> # vX.Y.Z` pin of the caller workflow and the installed toolchain agree, and that
 CI pins by commit SHA.
 
+The reusable workflows install the toolchain from the very commit the caller pinned: the job
+reads `job.workflow_sha` and `job.workflow_repository` -- the workflow file that defines it,
+resolved -- checks that out and installs it through the composite action in that checkout.
+There is no second version literal to keep in step, nothing a pin checker reads as unpinned,
+and the CI `verify-toolchain --expect-ref` is an exact comparison of the caller's SHA against
+the commit that is running (`tests/test_self_reference.py` holds the shape). The toolchain
+repository has to be readable by the caller's token: public, or the caller's own repository.
+
 The CI job runs on standard GitHub-hosted runners only and refuses billed runner labels.
 
 ## Commands
@@ -174,6 +194,12 @@ to a third party; OSV-Scanner queries the public OSV API with package coordinate
 
 ## Development
 
+Python 3.12 or newer -- the org standard -- on a laptop and on CI alike (`requires-python` in
+`pyproject.toml`; the unit matrix runs 3.12 and 3.13). v0.1.13 dropped 3.9 through 3.11 (3.9
+reached end of life in October 2025), which is also what lets the dev toolchain run pytest
+9.0.3+ (GHSA-6w46-j5rx-g56g). The pre-commit hooks install the package into whichever Python
+pre-commit selects, which has to meet that floor.
+
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install --require-hashes -r requirements-dev.txt   # pytest, pyyaml, ruff -- the CI pins
@@ -183,7 +209,8 @@ pytest -m integration           # downloads the pinned scanners, proves one-owne
 ```
 
 `pip install -e ".[dev]" ruff` works too when the exact CI versions do not matter.
-`requirements-dev.txt` carries the hashes CI installs with and says how to regenerate them.
+`requirements-dev.txt` carries the hashes CI installs with and says how to regenerate them;
+Dependabot proposes bumps for it and refreshes the hashes.
 
 The parsers are fuzzed with [atheris](https://github.com/google/atheris) on every push
 (`fuzz/README.md`): the lock validator, the overlay resolver, the changed-file reader, the
@@ -192,10 +219,10 @@ it enforces, and a bounded run of all of them is a job in `self-test.yml`. Postu
 by [OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/thyn-ai/security-toolchain)
 (`scorecard.yml`, weekly and on every push to `main`).
 
-Releasing: bump `version` in `pyproject.toml` and `__init__.py`, bump the
-`thyn-ai/security-toolchain@vX.Y.Z` reference in both reusable workflows, tag `vX.Y.Z`,
-publish the release. `propagate.yml` (or `scripts/propagate.py`) opens the pin-bump pull
-requests across the fleet -- see the next section for what the workflow needs.
+Releasing: bump `version` in `pyproject.toml` and `__init__.py` and the two pins in this
+README, merge, tag `vX.Y.Z` on the merged commit, publish the release. The reusable workflows
+carry no version of their own to bump. `propagate.yml` (or `scripts/propagate.py`) opens the
+pin-bump pull requests across the fleet -- see the next section for what the workflow needs.
 
 ## Running propagate from GitHub Actions
 

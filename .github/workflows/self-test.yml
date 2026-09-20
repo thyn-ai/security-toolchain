@@ -1,5 +1,7 @@
 # The toolchain's own CI: unit tests, lint, and the integration proof that every fixture
 # trips exactly its owner tool and nothing else. Runs on standard hosted Linux only.
+# Python 3.12 is the floor (pyproject.toml `requires-python`, the org standard): the unit
+# matrix runs it -- the composite action's default -- and the next minor.
 name: self-test
 
 on:
@@ -23,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.12"]
+        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,6 +58,20 @@ jobs:
         run: thyn-sec ci --tools gitleaks,opengrep,trivy --overlay python-uv --mode ratchet --changed ALL --out-dir "$RUNNER_TEMP/self"
       - name: Pins are consistent in this repo
         run: thyn-sec verify-toolchain
+
+  gate:
+    # The reusable workflow, called from this repository at the commit under test -- the path
+    # every fleet caller takes: the job locates its own commit (job.workflow_sha), checks it out,
+    # installs it through the composite action in that checkout, parks the source out of the
+    # scanned tree and runs `verify-toolchain --expect-ref` against the exact commit. Proven on
+    # every pull request, before a release can pin it. Smoke rather than full: the full gate's
+    # SARIF upload wants `security-events: write`, which this repository's tree has no use for.
+    name: reusable workflow installs the commit under test
+    uses: ./.github/workflows/security-smoke.yml
+    permissions:
+      contents: read
+    with:
+      mode: ratchet
 
   actionlint:
     name: workflow lint

@@ -6,7 +6,7 @@ description: >-
   private caller and a public caller use the same private-or-public toolchain.
 inputs:
   python-version:
-    description: Python used to run thyn-sec (any 3.9+; stdlib only).
+    description: Python used to run thyn-sec (any 3.12+; stdlib only).
     required: false
     default: "3.12"
   prefetch:
