@@ -29,7 +29,7 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   # thyn-security-toolchain:begin
   - repo: https://github.com/thyn-ai/security-toolchain
-    rev: v0.1.16
+    rev: v0.1.17
     hooks:
       - id: gitleaks-staged
       - id: opengrep-changed
@@ -54,7 +54,7 @@ on:
     branches: [main]
 jobs:
   full:
-    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.16
+    uses: thyn-ai/security-toolchain/.github/workflows/security-full.yml@<sha> # v0.1.17
     permissions: { contents: read, security-events: write, pull-requests: read, actions: read }
     with: { overlay: python-uv, mode: advisory }
 ```
@@ -89,57 +89,87 @@ every repository in [`fleet.json`](fleet.json) and bumps pins on each release.
 
 A fourth file, `.github/workflows/dependabot-auto-merge.yml`
 ([template](templates/dependabot-auto-merge.yml)), calls the reusable
-`dependabot-auto-merge.yml` for pull requests opened by `dependabot[bot]` on two events:
-`pull_request_target` (Dependabot's pushes) and `pull_request_review` (the codna review being
-submitted). Once the codna review has **approved** the pull request and left **no unresolved
-thread**, the job enables GitHub
-auto-merge on it; GitHub then completes the merge only once every ruleset requirement on the
-base branch is met -- the `codna review` status check and the repository's required checks --
-so the workflow adds no bypass and needs none. Adopt it **only** where the default branch
-requires `codna review` (every repository in `fleet.json` does: the org ruleset "Codna Review
-required", or a repository ruleset); without that requirement auto-merge would complete on green
-CI alone.
+`dependabot-auto-merge.yml` on three events: `pull_request_target` (Dependabot's pushes, and any
+other push to a Dependabot pull request's head) and `pull_request_review` (a codna review being
+submitted, in any state) for pull requests opened by `dependabot[bot]`, and `push` to `main`.
+Once the codna review has **approved** the pull request's **current head** and left **no
+unresolved thread**, the job enables GitHub auto-merge on it; GitHub then completes the merge only
+once every ruleset requirement on the base branch is met -- the `codna review` status check and
+the repository's required checks -- so the workflow adds no bypass and needs none. Adopt it
+**only** where the default branch requires `codna review` (every repository in `fleet.json` does:
+the org ruleset "Codna Review required", or a repository ruleset); without that requirement
+auto-merge would complete on green CI alone.
 
-* Minor and patch updates (per `dependabot/fetch-metadata`, the highest change in a grouped
-  update) are enabled. A **semver-major** update stays open for a human or codna decision even
-  when approved and green, unless the caller sets `auto_merge_majors: true`
-  (`dependabot_auto_merge_majors` in `fleet.json` renders that). A change Dependabot did not
-  classify (a requirement-range change carries no update-type) stays open too.
+* Minor and patch updates are enabled. A **semver-major** update stays open for a human or codna
+  decision even when approved and green, unless the caller sets `auto_merge_majors: true`
+  (`dependabot_auto_merge_majors` in `fleet.json` renders that). For a version bump (`Bump <pkg>
+  from X to Y`, a grouped update) the type is `dependabot/fetch-metadata`'s, the highest change in
+  the update. For a **requirement update** (`Update <pkg> requirement from <old range> to <new
+  range>`, pip) the job derives the type itself, from the two ranges' lower bounds (`>=X`, `~=X`
+  or `==X`, exactly one per range): fetch-metadata reads a range written upper-bound-first --
+  Dependabot's own format, `<2,>=1.29.0` -- as version `2,...` and reports a floor bump from
+  1.29.0 to 1.30.0 as a major (algenta-integrations #153, 2026-09-20). A requirement update whose
+  upper bound or exclusions moved too, or with no such lower bound on either side, is
+  unclassified and stays open with a notice, as does any other change without an update type.
 * The review is judged on the pull request's reviews, never on the `codna review` check-run
   conclusion: codna concludes that check-run `neutral` whenever it posted an inline finding
   (even a LOW one under an "Approved" summary) and `success` only when finding-free, and a
   neutral conclusion satisfies a required status check -- so on a ruleset that requires review
   thread resolution, the unresolved thread is what would hold an enabled auto-merge forever.
-  Auto-merge is enabled only when codna's latest review is `APPROVED`, the review decision is
-  not against it, and there are zero unresolved threads. Findings are never resolved by the
-  workflow; a pull request codna did not approve, or left findings on, stays for a human or
-  agent, and the run summary says so -- from there, resolve and merge it (or enable auto-merge)
-  by hand; there is no trigger on a thread being resolved, because the pinned actionlint (1.7.12)
-  does not know `pull_request_review_thread` and the pre-commit hook lints every caller.
+  Auto-merge is enabled only when codna's latest review is `APPROVED` and was submitted against
+  the current head, the review decision is not against it, and there are zero unresolved
+  threads. Findings are never resolved by the workflow; a pull request codna did not approve, or
+  left findings on, stays for a human or agent, and the run summary says so -- from there,
+  resolve and merge it (or enable auto-merge) by hand; there is no trigger on a thread being
+  resolved, because the pinned actionlint (1.7.12) does not know `pull_request_review_thread`
+  and the pre-commit hook lints every caller.
+* **An arm is good for one head.** GitHub keeps an enabled auto-merge across pushes to the head
+  branch and keeps an approval whose diff a rebase did not change, so a pull request armed on
+  head A stayed armed, with `reviewDecision` `APPROVED`, after Dependabot rebased it to head B,
+  and a finding codna then posted on B would not have stopped the merge (algenta-integrations
+  #150, 2026-09-20). The job therefore **disarms** an auto-merge it enabled itself when the head
+  changes (`synchronize`, whoever pushed) and when codna's latest verdict is not an approval of
+  the current head with zero unresolved threads; codna's approval of the new head re-arms it. An
+  auto-merge a human (or another App) enabled is never touched, in either direction.
 * Skipped, each with a `::notice`: a pull request not opened by `dependabot[bot]`, a
-  `pull_request_target` event not triggered by it, a review event that is not codna's approval
-  (any account can review a public repository's pull request; the caller's `if:` keeps every
-  other review from starting the job at all, and the callee refuses it too), a head branch in
-  another repository, a draft, a repository with "Allow auto-merge" off, and a pull request that
-  already has auto-merge enabled -- a human's decision is never overridden, in either direction.
+  `pull_request_target` event not triggered by it, a review event that is not codna's (any
+  account can review a public repository's pull request; the caller's `if:` keeps every other
+  reviewer from starting the job at all, and the callee refuses them too), a head branch in
+  another repository, a draft, a repository with "Allow auto-merge" off, and a pull request whose
+  auto-merge a human enabled.
 * A ruleset that **requires branches to be up to date** (`strict_required_status_checks_policy`)
-  turns every other open Dependabot pull request `BEHIND` on each merge, and Dependabot was
-  observed not rebasing them (thyn-ai/cohenta, 2026-09-20), so an enabled auto-merge never fires.
-  The fleet was audited at rollout: the policy is off on every private repository (cohenta
-  17646026 and algenta 17410382 were switched off on 2026-09-20, before-JSON kept); algenta-sdk
-  keeps it behind its merge queue, which rebases for it; the four other public repositories
-  (algenta-integrations, mojo-kernels, codna-action, feedback) keep it -- OpenSSF Scorecard's
-  Branch-Protection check scores it -- and there a Dependabot pull request lands on its own only
-  while up to date, otherwise after `@dependabot rebase`. `fleet.json` records this per repository.
+  turns every other open Dependabot pull request `BEHIND` on each merge to `main`, and GitHub's
+  auto-merge never updates a branch: an armed pull request then waits forever (algenta-integrations
+  #150/#152/#154, 2026-09-20 -- armed, `BEHIND` after the first sibling merged, moved only by a
+  human's `@dependabot rebase`). Dependabot honours that command from users with push access
+  only; to a GitHub App it answers "Sorry, only users with push access can use that command"
+  (dependabot/dependabot-core#9147, open). So the job **brings the branch up to date itself**,
+  with the App's token, through GitHub's update-branch API (`gh pr update-branch`): merging `main`
+  into the head rather than rebasing, because fetch-metadata verifies the pull request's first
+  commit -- Dependabot's, signed -- which a merge leaves in place and a server-side rebase
+  rewrites into a commit GitHub does not sign. Two paths reach it: the pull-request job, when it
+  arms a `BEHIND` pull request or finds one it armed still holding its conditions; and the `push`
+  sweep, for the pull requests that turned `BEHIND` without an event of their own. A base branch
+  with a merge queue is left to the queue (algenta-sdk). The update is a new head: the job disarms,
+  codna reviews that head, and its approval re-arms. The fleet was audited at rollout: the policy
+  is off on every private repository (cohenta 17646026 and algenta 17410382 were switched off on
+  2026-09-20, before-JSON kept); algenta-sdk keeps it behind its merge queue; the four other public
+  repositories (algenta-integrations, mojo-kernels, codna-action, feedback) keep it -- OpenSSF
+  Scorecard's Branch-Protection check scores it. `fleet.json` records this per repository.
 * The merge is enabled with an installation token of the org's `algenta-sdk-sync` App, scoped to
   the one repository, rather than with `GITHUB_TOKEN`: GitHub does not start workflow runs for
   events the `GITHUB_TOKEN` triggers (except `workflow_dispatch` and `repository_dispatch`), so a
   `GITHUB_TOKEN` merge would never run the `push` workflows on `main` -- release-please, deploys,
   mirrors, the gate's post-merge run. The caller passes exactly one secret, the org-wide
-  `ALGENTA_SDK_SYNC_APP_PRIVATE_KEY`; the App id is a public number and an input.
+  `ALGENTA_SDK_SYNC_APP_PRIVATE_KEY`; the App id and slug are public values and inputs
+  (`app_id`, `app_slug`; a caller that changes one must change the other, and the job refuses a
+  token minted for a different App than the slug names).
 * Nothing from the pull request runs: no checkout, no local action, no pull-request string in a
-  shell. `pull_request_target` is what makes the secret available for a Dependabot pull request
-  (a `pull_request` run by Dependabot gets a read-only token and no repository secrets).
+  shell. The title is the one free-text field read -- into the Decide step's environment, matched
+  against the requirement-update grammar above, never executed, and echoed only in tokens made of
+  range characters. `pull_request_target` is what makes the secret available for a Dependabot
+  pull request (a `pull_request` run by Dependabot gets a read-only token and no repository
+  secrets).
 
 ## How findings are judged
 

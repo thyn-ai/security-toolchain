@@ -208,10 +208,15 @@ def test_bump_carries_a_v0114_caller_to_the_filtered_review_trigger():
         + V0114_AUTO_MERGE_CALLER_TAIL
         % SHA_OLD
     )
-    assert "review.state" not in v0114
+    assert "review.user.login" not in v0114 and "push:" not in v0114
     out = propagate.upsert_auto_merge_workflow(v0114, SHA_NEW, "v0.1.15", majors=False)
     assert out == _auto_merge_caller(SHA_NEW, "v0.1.15")
-    assert "github.event.review.state == 'approved'" in out
+    # v0.1.15 filtered the review event to codna; v0.1.17 admits codna's reviews of any state
+    # (the callee disarms its own auto-merge on a non-approval) and adds the push trigger for
+    # the callee's sweep of BEHIND pull requests
+    assert "github.event.review.user.login == 'codna-ai[bot]'" in out
+    assert "review.state" not in out
+    assert "\n  push:\n    branches: [main]\n" in out
     assert propagate.upsert_auto_merge_workflow(out, SHA_NEW, "v0.1.15", majors=False) == out
 
 

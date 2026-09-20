@@ -146,7 +146,9 @@ def upsert_auto_merge_workflow(existing: str | None, sha: str, tag: str, majors:
     So a release that changes the caller's shape reaches every repository: v0.1.15 narrowed
     the job condition so a ``pull_request_review`` event starts the job only as codna's
     approval (on a public repository any account can review a Dependabot pull request), and
-    the v0.1.14 callers took that on their bump.
+    the v0.1.14 callers took that on their bump; v0.1.17 admits codna's reviews of any state
+    (the callee disarms its own auto-merge on a non-approval) and adds the ``push`` trigger
+    on ``main`` for the callee's sweep of BEHIND pull requests.
     """
     if existing is not None and _AUTO_MERGE_USES_RE.search(existing):
         chosen = _AUTO_MERGE_MAJORS_RE.search(existing)
