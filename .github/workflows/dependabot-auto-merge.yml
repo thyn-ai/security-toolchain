@@ -119,6 +119,11 @@ jobs:
         # Read-only, with the default token: whether the repository allows auto-merge at all,
         # whether this pull request already has it enabled (and by whom), the reviewer's latest
         # review, the review decision and the count of unresolved review threads.
+        #
+        # The setting comes from GraphQL's `autoMergeAllowed`: REST's `allow_auto_merge` is
+        # returned to admin and push tokens only and reads null to this read-only token, which
+        # v0.1.15 mistook for "off" and skipped every pull request (thyn-ai/cohenta, first
+        # live run). GraphQL exposes the field to any viewer who can read the repository.
         id: facts
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,7 +131,13 @@ jobs:
           REVIEWER: ${{ inputs.reviewer }}
         run: |
           set -euo pipefail
-          allow="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.allow_auto_merge')"
+          setting_query="$(cat <<'GRAPHQL'
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) { autoMergeAllowed }
+            }
+          GRAPHQL
+          )"
+          allow="$(gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -f query="$setting_query" --jq '.data.repository.autoMergeAllowed')"
           pr="$(gh pr view "$PR_NUMBER" -R "$GITHUB_REPOSITORY" --json state,isDraft,isCrossRepository,autoMergeRequest,mergeStateStatus,reviewDecision,reviews)"
           # Every review thread, across pages (`--paginate` follows pageInfo through $endCursor,
           # `--slurp` returns the pages as one array), so the count is exact however many threads

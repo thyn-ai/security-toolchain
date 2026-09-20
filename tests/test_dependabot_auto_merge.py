@@ -173,7 +173,12 @@ def test_facts_step_reads_reviews_and_threads_with_the_read_only_default_token()
     default_expr = "${{ github.token }}"
     assert facts["env"]["GH_TOKEN"] == default_expr
     run = facts["run"]
-    assert "allow_auto_merge" in run and "autoMergeRequest.enabledBy.login" in run
+    # the setting is read through GraphQL (`autoMergeAllowed`), never REST: REST's
+    # `allow_auto_merge` reads null to a read-only token, which v0.1.15 mistook for "off"
+    assert "repository(owner: $owner, name: $name) { autoMergeAllowed }" in run
+    assert ".data.repository.autoMergeAllowed" in run
+    assert ".allow_auto_merge" not in run and 'gh api "repos/${GITHUB_REPOSITORY}"' not in run
+    assert "autoMergeRequest.enabledBy.login" in run
     assert "reviewDecision" in run and "isCrossRepository" in run
     # the reviewer's LATEST review, matched with or without the [bot] suffix
     assert "| last | .state" in run and '($r + "[bot]")' in run
