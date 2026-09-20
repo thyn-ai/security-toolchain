@@ -266,16 +266,22 @@ def _run_decide(env_overrides: dict[str, str], tmp_path: Path) -> tuple[int, str
     return proc.returncode, proc.stdout + proc.stderr, _parse_github_output(out.read_text())
 
 
+_HEREDOC_START_RE = re.compile(r"^(?P<key>[A-Za-z_][A-Za-z0-9_-]*)<<(?P<delim>.+)$")
+
+
 def _parse_github_output(text: str) -> dict[str, str]:
-    """Read $GITHUB_OUTPUT the way the runner does: `name=value` lines, and the multiline-safe
-    `name<<DELIM` ... `DELIM` form, whose value keeps its newlines."""
+    """Read $GITHUB_OUTPUT the way the runner does: a line is the start of the multiline-safe
+    form only when a bare output name is followed by `<<DELIM` (the runner's grammar; `=` is not
+    a name character), and the value runs to the line equal to DELIM, newlines kept. Every other
+    line is `name=value`."""
     outputs: dict[str, str] = {}
     lines = text.splitlines()
     i = 0
     while i < len(lines):
         line = lines[i]
-        if "<<" in line and "=" not in line.split("<<", 1)[0]:
-            key, delim = line.split("<<", 1)
+        start = _HEREDOC_START_RE.match(line)
+        if start:
+            key, delim = start.group("key"), start.group("delim")
             body: list[str] = []
             i += 1
             while i < len(lines) and lines[i] != delim:
@@ -306,10 +312,13 @@ def test_decide(case: dict, tmp_path: Path):
         assert expect["reason_contains"] in outputs["reason"], outputs
         assert "::notice title=dependabot-auto-merge::" in combined, combined
         assert outputs["reason"] in combined
-        # the reason is written in the multiline-safe form (codna finding on #16), so a value
-        # with a newline reaches the summary whole instead of becoming a second, bogus output
+        # the reason is written in the multiline-safe form (codna findings on #16), so a value
+        # with a newline reaches the summary whole instead of becoming a second, bogus output --
+        # and the delimiter is random per call, so no value can end the block early
         raw = (tmp_path / "output.txt").read_text()
-        assert "reason<<_REASON_\n" in raw and "\nreason=" not in raw, raw
+        start = re.search(r"^reason<<(reason_[0-9a-f]{32})$", raw, re.M)
+        assert start, raw
+        assert "\nreason=" not in raw and start.group(1) not in outputs["reason"], raw
         assert set(outputs) == {"decision", "reason"}, outputs
     else:
         assert outputs["reason"] == ""

@@ -183,10 +183,12 @@ jobs:
           skip() {
             echo "::notice title=dependabot-auto-merge::#${PR_NUMBER}: not enabling auto-merge -- $1"
             # the reason embeds values read from the API and the metadata action, so it is
-            # written in the multiline-safe `name<<DELIM` form rather than `name=value`
+            # written in the multiline-safe `name<<DELIM` form rather than `name=value`, with a
+            # random delimiter (as GitHub's docs prescribe) so no value can end it early
+            delim="reason_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
             {
               echo "decision=skip"
-              printf 'reason<<_REASON_\n%s\n_REASON_\n' "$1"
+              printf 'reason<<%s\n%s\n%s\n' "$delim" "$1" "$delim"
             } >> "$GITHUB_OUTPUT"
             exit 0
           }
