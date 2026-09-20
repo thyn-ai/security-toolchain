@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -150,6 +151,91 @@ def test_merge_group_mirrors_only_the_pull_request_branch_filter(filters, mirror
     out = propagate.add_merge_group_trigger(_caller_with(filters))
     assert ("  pull_request:\n" + filters + "  merge_group:\n" + mirrored + "  push:\n") in out, out
     assert out.count("merge_group:") == 1
+
+
+def _auto_merge_caller(sha: str, tag: str, majors: str = "false") -> str:
+    return _rendered("dependabot-auto-merge.yml", sha=sha, tag=tag, auto_merge_majors=majors)
+
+
+def test_auto_merge_caller_is_rendered_when_absent_and_only_its_pin_moves_afterwards():
+    fresh = propagate.upsert_auto_merge_workflow(None, SHA_OLD, "v0.1.14", majors=False)
+    assert fresh == _auto_merge_caller(SHA_OLD, "v0.1.14")
+    assert "auto_merge_majors: false" in fresh
+    # a repository that opted majors in keeps that on the bump: only the pin changes
+    opted_in = _auto_merge_caller(SHA_OLD, "v0.1.14", majors="true")
+    bumped = propagate.upsert_auto_merge_workflow(opted_in, SHA_NEW, "v0.1.15", majors=False)
+    assert bumped == opted_in.replace(f"@{SHA_OLD} # v0.1.14", f"@{SHA_NEW} # v0.1.15")
+    assert "auto_merge_majors: true" in bumped
+    assert propagate.upsert_auto_merge_workflow(bumped, SHA_NEW, "v0.1.15", majors=False) == bumped
+
+
+def test_auto_merge_caller_regex_does_not_touch_the_security_caller_and_vice_versa():
+    security = _rendered(
+        "security.yml", sha=SHA_OLD, tag="v0.1.14", overlay="site", mode="advisory"
+    )
+    assert not propagate._AUTO_MERGE_USES_RE.search(security)
+    assert not propagate._USES_RE.search(_auto_merge_caller(SHA_OLD, "v0.1.14"))
+
+
+def _fleet() -> dict:
+    return json.loads((REPO / "fleet.json").read_text(encoding="utf-8"))
+
+
+def _plan_paths(repo_dir: Path, cfg: dict) -> dict[str, str]:
+    fleet = _fleet()
+    return {
+        str(p.relative_to(repo_dir)): text
+        for p, text in propagate.plan(repo_dir, cfg, fleet["defaults"], "v0.1.14", SHA_NEW)
+    }
+
+
+def test_plan_adds_the_auto_merge_caller_next_to_the_gate_by_default(tmp_path: Path):
+    changes = _plan_paths(tmp_path, {"overlay": "site"})
+    assert set(changes) == {
+        ".pre-commit-config.yaml",
+        ".github/workflows/security.yml",
+        ".github/workflows/dependabot-auto-merge.yml",
+    }
+    assert changes[".github/workflows/dependabot-auto-merge.yml"] == _auto_merge_caller(
+        SHA_NEW, "v0.1.14"
+    )
+    # the fleet default is on, and it is spelled out rather than implied
+    assert _fleet()["defaults"]["dependabot_auto_merge"] is True
+
+
+def test_plan_honours_the_per_repository_opt_out_and_the_majors_opt_in(tmp_path: Path):
+    off = _plan_paths(tmp_path / "off", {"overlay": "site", "dependabot_auto_merge": False})
+    assert ".github/workflows/dependabot-auto-merge.yml" not in off
+    majors = _plan_paths(
+        tmp_path / "majors", {"overlay": "site", "dependabot_auto_merge_majors": True}
+    )
+    assert "auto_merge_majors: true" in majors[".github/workflows/dependabot-auto-merge.yml"]
+
+
+def test_plan_is_a_no_op_on_a_repository_already_at_the_tag(tmp_path: Path):
+    first = _plan_paths(tmp_path, {"overlay": "site"})
+    for rel, text in first.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text, encoding="utf-8")
+    assert _plan_paths(tmp_path, {"overlay": "site"}) == {}
+
+
+def test_plan_refuses_the_auto_merge_caller_outside_sync_safe_paths(tmp_path: Path):
+    cfg = {"overlay": "site", "sync_safe_paths": [".pre-commit-config.yaml"]}
+    with pytest.raises(SystemExit, match="refusing to touch .github/workflows/"):
+        propagate.plan(tmp_path, cfg, _fleet()["defaults"], "v0.1.14", SHA_NEW)
+
+
+def test_every_fleet_repository_gets_the_auto_merge_caller():
+    """fleet.json documents that every repository requires `codna review` on its default branch,
+    the precondition for adopting the caller; none opts out, and none opts majors in."""
+    fleet = _fleet()
+    for name, cfg in fleet["repos"].items():
+        assert (
+            cfg.get("dependabot_auto_merge", fleet["defaults"]["dependabot_auto_merge"]) is True
+        ), name
+        assert not cfg.get("dependabot_auto_merge_majors", False), name
+    assert any("codna review" in line for line in fleet["_comment"])
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,41 @@
+# Dependabot pull requests land on their own: once the codna review has approved one and left no
+# unresolved finding, this enables GitHub auto-merge on it, and GitHub completes the merge only
+# once every ruleset requirement on the base branch is met -- the `codna review` status check and
+# this repository's required checks. Nothing here bypasses or replaces that gate. The merge is
+# attributed to the org's algenta-sdk-sync App, so the `push` workflows on the default branch run
+# afterwards (a GITHUB_TOKEN merge would not start them).
+# Managed by thyn-ai/security-toolchain (propagate bumps the pin). Change `auto_merge_majors`
+# here to let semver-major updates through as well; by default a major stays open for a human
+# or codna decision even when approved and green.
+#
+# Adopt this ONLY in a repository whose default branch requires the `codna review` status check
+# (a repository ruleset, or the thyn-ai org ruleset "Codna Review required"). Without that
+# requirement auto-merge would complete on green CI alone.
+#
+# Two events, both carrying the pull request: Dependabot's own pushes, and the codna review being
+# submitted (the decision needs it, and it lands minutes after the push). A pull request codna
+# left findings on is yours from there: resolve them and merge it (or enable auto-merge) yourself.
+# pull_request_target runs on the base branch with this repository's secrets. The called workflow
+# never checks out or executes anything from the pull request: it reads the update type
+# Dependabot signed into its commit and calls the API.
+name: dependabot-auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+
+permissions: {{}}
+
+jobs:
+  enable:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    uses: thyn-ai/security-toolchain/.github/workflows/dependabot-auto-merge.yml@{sha} # {tag}
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      auto_merge_majors: {auto_merge_majors}
+    secrets:
+      app_private_key: ${{{{ secrets.ALGENTA_SDK_SYNC_APP_PRIVATE_KEY }}}}
