@@ -140,15 +140,17 @@ def add_merge_group_trigger(text: str) -> str:
     if not first:
         return text
     indent = first.group(1)
-    if re.search(rf"(?m)^{indent}merge_group:", body):
+    # spaces and tabs only, by the capture above; escaped anyway so the patterns read as literal
+    indent_re = re.escape(indent)
+    if re.search(rf"(?m)^{indent_re}merge_group:", body):
         return text
     pull = re.search(
-        rf"(?m)^{indent}pull_request:[^\n]*\n(?P<nested>(?:{indent}[ \t]+\S[^\n]*\n)*)", body
+        rf"(?m)^{indent_re}pull_request:[^\n]*\n(?P<nested>(?:{indent_re}[ \t]+\S[^\n]*\n)*)", body
     )
     if not pull:
         return text
     branches = re.search(
-        rf"(?m)^(?P<i>{indent}[ \t]+)branches(?:-ignore)?:[^\n]*\n(?:(?P=i)[ \t]+\S[^\n]*\n)*",
+        rf"(?m)^(?P<i>{indent_re}[ \t]+)branches(?:-ignore)?:[^\n]*\n(?:(?P=i)[ \t]+\S[^\n]*\n)*",
         pull.group("nested"),
     )
     entry = f"{indent}merge_group:\n" + (branches.group(0) if branches else "")
