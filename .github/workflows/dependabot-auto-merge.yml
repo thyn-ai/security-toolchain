@@ -467,7 +467,7 @@ jobs:
         # that permission is refused for such a pull request.
         id: mint
         if: steps.decide.outputs.decision == 'enable' || steps.decide.outputs.decision == 'disarm' || steps.decide.outputs.update_branch == 'true'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.3.0
         with:
           app-id: ${{ inputs.app_id }}
           private-key: ${{ secrets.app_private_key }}
@@ -663,7 +663,7 @@ jobs:
         # Only when there is a branch to update; the secret reaches this input and nothing else.
         id: mint
         if: steps.behind.outputs.count != '0'
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.3.0
         with:
           app-id: ${{ inputs.app_id }}
           private-key: ${{ secrets.app_private_key }}
