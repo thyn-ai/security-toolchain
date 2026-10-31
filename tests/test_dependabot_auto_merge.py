@@ -53,7 +53,7 @@ SWEEP_STEPS = SWEEP["steps"]
 ALL_STEPS = STEPS + SWEEP_STEPS
 
 SHA = "c" * 40
-MINT_ACTION = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+MINT_ACTION = "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
 METADATA_ACTION = "dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98"
 TOKEN_PERMISSIONS = {
     "permission-contents": "write",
